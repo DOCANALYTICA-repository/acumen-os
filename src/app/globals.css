@@ -1,26 +1,114 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* Design system ported from the DOC Analytica website: off-white canvas, sky-blue brand, frosted glass. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-brand: #2563eb;
+  --color-brand-dark: #1d4ed8;
+  --color-accent: #f59e0b;
+  --color-ink: #0a0f1c;
+  --color-muted: #4b5563;
+  --color-line: #e2e8f0;
+  --color-surface: #f6f7f9;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-sky-50: #eff6ff;
+  --color-sky-100: #dbeafe;
+  --color-sky-200: #bfdbfe;
+  --color-sky-300: #93c5fd;
+  --color-sky-400: #60a5fa;
+  --color-sky-500: #3b82f6;
+  --color-sky-600: #2563eb;
+  --color-sky-700: #1d4ed8;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono);
+
+  --radius-5xl: 2.5rem;
+  --shadow-glass: 0 8px 32px rgba(37, 99, 235, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-glass-lg: 0 24px 60px rgba(37, 99, 235, 0.12), 0 2px 8px rgba(15, 23, 42, 0.05);
+  --shadow-soft: 0 2px 12px rgba(15, 23, 42, 0.05);
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-float-slow: float-slow 9s ease-in-out infinite;
+  --animate-shimmer: shimmer 6s linear infinite;
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-14px); }
+  }
+  @keyframes float-slow {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-18px) rotate(1deg); }
+  }
+  @keyframes shimmer {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+  background-image:
+    radial-gradient(55% 40% at 78% 8%, rgba(96, 165, 250, 0.16) 0%, rgba(246, 247, 249, 0) 60%),
+    radial-gradient(45% 35% at 10% 30%, rgba(191, 219, 254, 0.16) 0%, rgba(246, 247, 249, 0) 55%),
+    linear-gradient(180deg, #f3f5f8 0%, #f6f7f9 32%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10;
+  }
+  .glass {
+    @apply border border-white/60 bg-white/55 shadow-glass backdrop-blur-xl;
+  }
+  .glass-strong {
+    @apply border border-white/70 bg-white/75 shadow-glass backdrop-blur-2xl;
+  }
+  .eyebrow {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-sky-100 bg-sky-50/80 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-sky-600;
+  }
+  .text-gradient {
+    @apply bg-gradient-to-r from-sky-600 to-sky-400 bg-clip-text text-transparent;
+  }
+  /* Animated brand gradient for the hero wordmark */
+  .text-shimmer {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, #1d4ed8 0%, #3b82f6 25%, #f59e0b 50%, #3b82f6 75%, #1d4ed8 100%);
+    background-size: 200% auto;
+    animation: var(--animate-shimmer);
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-sky-600 to-sky-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(37,99,235,0.35)] transition-all duration-300 hover:shadow-[0_12px_32px_rgba(37,99,235,0.45)] hover:brightness-105;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/70 bg-white/70 px-6 py-3 text-sm font-semibold text-ink backdrop-blur-md transition-all duration-300 hover:bg-white hover:shadow-soft;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer,
+  .animate-float,
+  .animate-float-slow {
+    animation: none;
+  }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::selection { background: rgba(96, 165, 250, 0.25); }
