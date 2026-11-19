@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { parseConfig } from "@/lib/sim/model";
 import { db, parseJson } from "@/lib/db";
 import { ALL_FILE_TYPES, excelKey, submissionSettings, TYPE_LABEL } from "@/lib/rounds";
 import { excelMax, quizMax } from "@/lib/scoring";
@@ -20,12 +22,18 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
       questions: { orderBy: { order: "asc" } },
       criteria: true,
       attempts: { include: { team: true }, orderBy: { autoScore: "desc" } },
+      economy: { select: { config: true, status: true } },
+      liveQuiz: { select: { status: true, currentIndex: true } },
     },
   });
   if (!round) notFound();
   const rules = submissionSettings(round);
   const key = excelKey(round);
-  const max = round.type === "QUIZ" ? quizMax(round.questions) : round.type === "EXCEL" ? excelMax(key) : round.criteria.reduce((s, c) => s + c.maxMarks, 0);
+  const max =
+    round.type === "QUIZ" ? quizMax(round.questions)
+    : round.type === "EXCEL" ? excelMax(key)
+    : round.type === "SIMULATION" ? parseConfig(round.economy?.config).scoring.maxMarks
+    : round.criteria.reduce((s, c) => s + c.maxMarks, 0);
 
   return (
     <>
@@ -46,7 +54,7 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
             </Field>
             <Field label="Starts (IST)"><input type="datetime-local" name="startsAt" defaultValue={toIstInput(round.startsAt)} className={cls.input} /></Field>
             <Field label="Ends (IST)"><input type="datetime-local" name="endsAt" defaultValue={toIstInput(round.endsAt)} className={cls.input} /></Field>
-            {round.type !== "SUBMISSION" && (
+            {round.type === "EXCEL" && (
               <Field label="Timer (minutes)" hint="Per team, from when they press Start"><input type="number" min={1} name="durationMinutes" defaultValue={round.durationMinutes ?? ""} className={cls.input} /></Field>
             )}
             <Field label="Leaderboard weight" hint="Relative weight in the overall score"><input type="number" step="0.5" min={0} name="weight" defaultValue={round.weight} className={cls.input} /></Field>
@@ -90,8 +98,32 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
         </form>
       </Card>
 
+      {round.type === "SIMULATION" && (
+        <Card title="Startup Ecosystem simulation" className="mb-6">
+          <p className="text-sm text-ink/80">
+            Economy, startup assignments, cycles, market events and monitoring live in the simulation control room.
+            {round.economy ? ` Current state: ${round.economy.status.toLowerCase()}.` : " No economy has been created yet."}
+          </p>
+          <Link href={`/admin/simulation/${round.id}`} className={`${cls.btn} ${cls.primary} mt-4`}>Open control room</Link>
+        </Card>
+      )}
+
       {round.type === "QUIZ" && (
         <>
+          <Card title="Live quiz" className="mb-6">
+            <p className="text-sm text-ink/80">
+              This quiz is run live by a host: put the host screen on the projector, teams join from their phones, and everyone answers each question at the same time.
+              Faster correct answers score more (up to 1,000 points per mark, falling to half at the buzzer). Marks are saved here when the game ends.
+            </p>
+            <p className="mt-2 text-sm text-muted">
+              {round.liveQuiz
+                ? round.liveQuiz.status === "FINISHED" ? "Game finished. Reset it on the host screen to play again."
+                  : round.liveQuiz.status === "LOBBY" ? "Lobby is open: teams are joining."
+                  : `Game in progress: question ${round.liveQuiz.currentIndex + 1} of ${round.questions.length}.`
+                : "No game open yet."}
+            </p>
+            <Link href={`/host/${round.id}`} className={`${cls.btn} ${cls.primary} mt-4`}>Open host screen</Link>
+          </Card>
           <Card title={`Questions (${round.questions.length})`} className="mb-6">
             <ol className="space-y-3">
               {round.questions.map((q, i) => {
@@ -103,7 +135,7 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
                     <div className="text-sm">
                       <div className="font-medium text-ink">{i + 1}. {q.text}</div>
                       {opts.length > 0 && <div className="mt-1 text-xs text-muted">{opts.join(" · ")}</div>}
-                      <div className="mt-1 text-xs"><Badge tone="green">Answer: {shown}</Badge> <Badge>{q.type}</Badge> <Badge>{q.marks} marks{q.negativeMarks ? `, −${q.negativeMarks}` : ""}</Badge></div>
+                      <div className="mt-1 text-xs"><Badge tone="green">Answer: {shown}</Badge> <Badge>{q.type}</Badge> <Badge>{q.marks} {q.marks === 1 ? "mark" : "marks"}</Badge> <Badge>{q.timeLimit}s</Badge></div>
                     </div>
                     <form action={deleteQuestion}><input type="hidden" name="id" value={q.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm="Delete this question?">Delete</SubmitButton></form>
                   </li>
@@ -127,15 +159,15 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
                 <Field label="Options" hint="One per line (choice questions only)"><textarea name="options" rows={4} className={cls.input} /></Field>
                 <Field label="Correct answer" hint="Option number (e.g. 2), several for multiple select (1,3), true/false, or the exact text/number"><input name="answer" required className={cls.input} /></Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Marks"><input type="number" step="0.5" name="marks" defaultValue={1} className={cls.input} /></Field>
-                  <Field label="Negative marks"><input type="number" step="0.25" name="negativeMarks" defaultValue={0} className={cls.input} /></Field>
+                  <Field label="Marks" hint="2 = double points"><input type="number" step="0.5" min={0.5} name="marks" defaultValue={1} className={cls.input} /></Field>
+                  <Field label="Time to answer (seconds)"><input type="number" min={5} max={240} name="timeLimit" defaultValue={20} className={cls.input} /></Field>
                 </div>
                 <SubmitButton>Add question</SubmitButton>
               </form>
             </Card>
             <Card title="Import from CSV">
-              <p className="mb-3 text-sm text-muted">Columns: <code>type,text,options,answer,marks,negative</code>. Options separated by <code>|</code>; answers are option numbers (multi: <code>1;3</code>).</p>
-              <pre className="mb-3 overflow-x-auto rounded bg-surface p-2 text-xs">SINGLE,&quot;What is 2+2?&quot;,3|4|5,2,1,0.25</pre>
+              <p className="mb-3 text-sm text-muted">Columns: <code>type,text,options,answer,marks,seconds</code>. Options separated by <code>|</code>; answers are option numbers (multi: <code>1;3</code>). Seconds defaults to 20.</p>
+              <pre className="mb-3 overflow-x-auto rounded bg-surface p-2 text-xs">SINGLE,&quot;What is 2+2?&quot;,3|4|5,2,1,20</pre>
               <form action={importQuestions} className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="roundId" value={round.id} />
                 <input type="file" name="file" accept=".csv" className={`${cls.input} max-w-xs`} />
@@ -196,7 +228,7 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
       )}
 
       {round.type !== "SUBMISSION" && (
-        <Card title={`Attempts (${round.attempts.length})`}>
+        <Card title={round.type === "SIMULATION" ? `Final simulation marks (${round.attempts.length})` : `Attempts (${round.attempts.length})`}>
           {round.attempts.length === 0 ? <p className="text-sm text-muted">No attempts yet.</p> : (
             <div className="overflow-x-auto">
               <table className="w-full">

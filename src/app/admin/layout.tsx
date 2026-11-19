@@ -5,6 +5,7 @@ import { Container } from "@/components/ui";
 const items = [
   ["/admin", "Dashboard"],
   ["/admin/rounds", "Rounds"],
+  ["/admin/simulation", "Simulation control"],
   ["/admin/teams", "Teams"],
   ["/admin/participants", "Participants"],
   ["/admin/submissions", "Submissions & judging"],

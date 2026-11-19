@@ -8,33 +8,22 @@ import { fileUrl, formatBytes, type StoredFile } from "@/lib/files";
 import { finalizeIfExpired, startAttempt } from "@/app/actions/rounds";
 import { Alert, Badge, Card, Container, PageHeader, cls, fmtDate, statusTone } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
-import { QuizClient, type ClientQuestion } from "./quiz-client";
+import { playerState } from "@/lib/live-quiz";
 import { ExcelClient } from "./excel-client";
 import { SubmissionForm } from "./submission-form";
-
-/** Deterministic shuffle so a team always sees the same order. */
-function seededShuffle<T>(arr: T[], seed: string) {
-  let h = 2166136261;
-  for (const c of seed) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  const out = [...arr];
-  for (let i = out.length - 1; i > 0; i--) {
-    h = Math.imul(h ^ (h >>> 13), 1274126177);
-    const j = Math.abs(h) % (i + 1);
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
+import { SimView } from "./sim-view";
+import { LivePlayer } from "./live-player";
 
 export default async function RoundPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser();
   if (user.role !== "PARTICIPANT") redirect(user.role === "ADMIN" ? `/admin/rounds/${id}` : "/judge");
-  const round = await db.round.findUnique({ where: { id }, include: { questions: { orderBy: { order: "asc" } } } });
+  const round = await db.round.findUnique({ where: { id } });
   if (!round || round.status === "DRAFT") notFound();
   const team = user.membership?.team;
   if (!team) redirect("/dashboard");
 
-  await finalizeIfExpired(round.id, team.id);
+  if (round.type === "EXCEL") await finalizeIfExpired(round.id, team.id);
   const content = await getContent();
   const st = effectiveStatus(round);
   const status = teamStatus(team, team.members.length, content.teamMin);
@@ -56,6 +45,24 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
       {round.briefFile && <a href={fileUrl(round.briefFile)} className={`${cls.ghost} mt-3 inline-block text-sm`}>Download brief</a>}
     </Card>
   );
+
+  // ---------- Simulation rounds ----------
+  if (round.type === "SIMULATION") {
+    return (
+      <Container className="py-10">
+        {header}
+        {(round.description || round.instructions || round.briefFile) && (
+          <details className="glass mb-6 rounded-3xl p-5">
+            <summary className="cursor-pointer text-sm font-semibold text-ink">Round brief and rules</summary>
+            <p className="mt-3 whitespace-pre-line text-sm text-ink/80">{round.description}</p>
+            {round.instructions && <p className="mt-3 whitespace-pre-line text-sm text-ink/80">{round.instructions}</p>}
+            {round.briefFile && <a href={fileUrl(round.briefFile)} className={`${cls.ghost} mt-3 inline-block text-sm`}>Download brief</a>}
+          </details>
+        )}
+        {blocker ? <Alert tone="amber">{blocker}</Alert> : <SimView roundId={round.id} teamId={team.id} resultsPublished={round.resultsPublished} />}
+      </Container>
+    );
+  }
 
   // ---------- Submission rounds ----------
   if (round.type === "SUBMISSION") {
@@ -99,7 +106,30 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  // ---------- Quiz / Excel ----------
+  // ---------- Live quiz (host-led) ----------
+  if (round.type === "QUIZ") {
+    return (
+      <Container className="py-10">
+        {header}
+        {blocker ? (
+          <>{brief}<Alert tone="amber">{blocker}</Alert></>
+        ) : (
+          <>
+            <LivePlayer roundId={round.id} initial={await playerState(round.id, { id: team.id, name: team.name })} />
+            {(round.description || round.instructions) && (
+              <details className="glass mx-auto mt-6 max-w-2xl rounded-3xl p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-ink">How this round works</summary>
+                <p className="mt-3 whitespace-pre-line text-sm text-ink/80">{round.description}</p>
+                {round.instructions && <p className="mt-3 whitespace-pre-line text-sm text-ink/80">{round.instructions}</p>}
+              </details>
+            )}
+          </>
+        )}
+      </Container>
+    );
+  }
+
+  // ---------- Excel ----------
   if (attempt?.submittedAt) {
     return (
       <Container className="py-10">
@@ -134,11 +164,10 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           <div className="space-y-3 text-sm text-ink/80">
             <p><strong>One attempt per team.</strong> Any member can start it; only one person should answer.</p>
             {round.durationMinutes && <p>You have <strong>{round.durationMinutes} minutes</strong> once you start. The timer keeps running if you close the page.</p>}
-            {round.type === "QUIZ" && <p>{round.questions.length} questions. Switching tabs is logged for the organizers.</p>}
           </div>
           <form action={startAttempt} className="mt-6">
             <input type="hidden" name="roundId" value={round.id} />
-            <SubmitButton pendingText="Starting…" confirm="Start now? The timer begins immediately.">Start {round.type === "QUIZ" ? "quiz" : "Excel round"}</SubmitButton>
+            <SubmitButton pendingText="Starting…" confirm="Start now? The timer begins immediately.">Start Excel round</SubmitButton>
           </form>
         </Card>
       </Container>
@@ -147,23 +176,6 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
 
   const left = timeLeftMs(round, attempt.startedAt);
   const deadline = left === null ? null : Date.now() + left;
-
-  if (round.type === "QUIZ") {
-    const questions: ClientQuestion[] = seededShuffle(round.questions, team.id).map((q) => ({
-      id: q.id,
-      type: q.type,
-      text: q.text,
-      marks: q.marks,
-      negativeMarks: q.negativeMarks,
-      options: seededShuffle(parseJson<string[]>(q.options, []).map((label, index) => ({ index, label })), team.id + q.id),
-    }));
-    return (
-      <Container className="py-10">
-        {header}
-        <QuizClient roundId={round.id} questions={questions} initial={parseJson(attempt.answers, {})} deadline={deadline} />
-      </Container>
-    );
-  }
 
   const key = excelKey(round);
   return (

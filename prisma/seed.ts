@@ -1,6 +1,7 @@
 /**
- * Seeds a local Acumen database with the 5 rounds, sample quiz questions, an Excel case,
- * rubrics, Home content and (optionally) demo teams for analytics.
+ * Seeds a local Acumen database with the 5 rounds (quiz, Excel case, two submission rounds and the
+ * Startup Ecosystem simulation as Round 4), sample quiz questions, rubrics, Home content and
+ * (optionally) demo teams for analytics, assigned to simulation startups.
  *
  * Local test accounts (development only — change or delete before going live):
  *   Admin:  admin@acumen.test  / Acumen@Admin2026
@@ -14,6 +15,8 @@ import bcrypt from "bcryptjs";
 import * as XLSX from "xlsx";
 import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
+import { EV_TEMPLATE } from "../src/lib/sim/model";
+import { initialMarket, initialState } from "../src/lib/sim/engine";
 
 const db = new PrismaClient();
 const DAY = 86_400_000;
@@ -102,10 +105,10 @@ async function main() {
 
   const quiz = await db.round.create({
     data: {
-      order: 1, name: "Round 1 — Quiz", type: "QUIZ", weight: 20, status: "SCHEDULED", durationMinutes: 20,
+      order: 1, name: "Round 1 — Live Quiz", type: "QUIZ", weight: 20, status: "SCHEDULED",
       startsAt: new Date(now - DAY), endsAt: new Date(now + 7 * DAY),
-      description: "A timed quiz on business, finance and current affairs.",
-      instructions: "One attempt per team. 20 minutes. Answers save automatically. Switching tabs is logged.",
+      description: "A fast, live quiz on business, finance and current affairs, run from the main screen.",
+      instructions: "Keep this page open on a phone or laptop. The host shows each question on the main screen and every team answers at the same time. One answer per team: the first teammate to tap locks it in. Correct answers score up to 1,000 points, more the faster you answer.",
     },
   });
   const quizQs = [
@@ -120,7 +123,7 @@ async function main() {
   ];
   for (const [i, q] of quizQs.entries())
     await db.question.create({
-      data: { roundId: quiz.id, order: i, type: q.type, text: q.text, options: JSON.stringify(q.options), answer: JSON.stringify(q.answer), marks: 2, negativeMarks: q.type === "SINGLE" ? 0.5 : 0 },
+      data: { roundId: quiz.id, order: i, type: q.type, text: q.text, options: JSON.stringify(q.options), answer: JSON.stringify(q.answer), marks: 1, timeLimit: q.type === "MULTI" || q.type === "SHORT" ? 30 : 20 },
     });
 
   const excelRound = await db.round.create({
@@ -135,22 +138,37 @@ async function main() {
 
   const subRounds = [];
   for (const [i, s] of [
-    { name: "Round 3 — Case Brief", desc: "Submit a 2-page written analysis of the case.", types: ["pdf", "docx"], start: -DAY, end: 10 },
-    { name: "Round 4 — Strategy Deck", desc: "Submit a 10-slide strategy deck.", types: ["pdf", "pptx"], start: 12 * DAY, end: 20 },
-    { name: "Round 5 — Final Pitch", desc: "Submit your final deck and a pitch video link.", types: ["pdf", "pptx", "mp4"], start: 22 * DAY, end: 28 },
+    { order: 3, name: "Round 3 — Case Brief", desc: "Submit a 2-page written analysis of the case.", types: ["pdf", "docx"], start: -DAY, end: 10, final: false },
+    { order: 5, name: "Round 5 — Final Pitch", desc: "Submit your final deck and a pitch video link.", types: ["pdf", "pptx", "mp4"], start: 22 * DAY, end: 28, final: true },
   ].entries()) {
     const r = await db.round.create({
       data: {
-        order: 3 + i, name: s.name, type: "SUBMISSION", weight: 20, status: i === 0 ? "SCHEDULED" : "DRAFT",
+        order: s.order, name: s.name, type: "SUBMISSION", weight: 20, status: i === 0 ? "SCHEDULED" : "DRAFT",
         startsAt: new Date(now + s.start), endsAt: new Date(now + s.end * DAY), description: s.desc,
         instructions: "Upload before the deadline. You can replace your file until the round closes; the latest version counts.",
-        settings: JSON.stringify({ allowedTypes: s.types, maxSizeMB: 25, maxFiles: i === 2 ? 2 : 1, allowResubmit: true, allowLate: false, latePenaltyPct: 0, allowLinks: i === 2, anonymousJudging: true }),
+        settings: JSON.stringify({ allowedTypes: s.types, maxSizeMB: 25, maxFiles: s.final ? 2 : 1, allowResubmit: true, allowLate: false, latePenaltyPct: 0, allowLinks: s.final, anonymousJudging: true }),
       },
     });
     for (const c of [["Insight", 30], ["Feasibility", 25], ["Presentation", 20], ["Use of data", 25]] as const)
       await db.rubricCriterion.create({ data: { roundId: r.id, name: c[0], maxMarks: c[1] } });
     subRounds.push(r);
   }
+
+  // Round 4: the Startup Ecosystem business simulation (economy starts in SETUP; open it from Admin → Simulation control).
+  const simRound = await db.round.create({
+    data: {
+      order: 4, name: "Round 4 — Startup Ecosystem", type: "SIMULATION", weight: 20, status: "SCHEDULED",
+      startsAt: new Date(now - DAY), endsAt: new Date(now + 10 * DAY),
+      description: "Run one of ten interconnected startups in a shared electric-mobility economy. Compete and cooperate with the other teams over five cycles of decisions, negotiations and market shocks.",
+      instructions:
+        "Each cycle, set your price, production, marketing, quality spend, capacity investment and financing before the window closes. All teams' decisions are processed together.\n" +
+        "Negotiate supply contracts with the startups you buy from or sell to. Contracts are binding.\n" +
+        "You may use any outside tools, including AI. The simulation engine alone decides outcomes.\n" +
+        "Final marks: return on equity and brand (relative to other teams) plus contract reliability.",
+    },
+  });
+  const simEcon = await db.simEconomy.create({ data: { roundId: simRound.id, config: JSON.stringify(EV_TEMPLATE), market: JSON.stringify(initialMarket(EV_TEMPLATE)) } });
+  await db.simEvent.createMany({ data: EV_TEMPLATE.scheduledEvents.map((e) => ({ economyId: simEcon.id, cycle: e.cycle, title: e.title, description: e.description, effects: JSON.stringify(e.effects) })) });
 
   await db.announcement.create({ data: { message: "Registrations are open. Round 1 (Quiz) and Round 2 (Excel) are live for paid teams." } });
 
@@ -165,12 +183,11 @@ async function main() {
   const last = ["Shah", "Iyer", "Mehta", "Rao", "Kapoor", "Nair", "Das", "Singh"];
   const teamNames = ["Bull Run", "Margin Masters", "Pivot Table", "Quant Squad", "Cash Flow Crew", "Delta Force", "Alpha Seekers", "Ledger Legends", "Data Dons", "Blue Chips", "Hedgehogs", "The Arbitrageurs", "Spreadsheet Sages", "Market Makers"];
   const pw = await bcrypt.hash("Demo@2026", 10);
-  const quizQuestions = await db.question.findMany({ where: { roundId: quiz.id } });
-  const quizMax = quizQuestions.reduce((s, q) => s + q.marks, 0);
   const excelMax = excel.key.reduce((s, k) => s + k.marks, 0);
   const criteria = await db.rubricCriterion.findMany({ where: { roundId: subRounds[0].id } });
 
   let n = 0;
+  let simSlot = 0;
   for (const [ti, name] of teamNames.entries()) {
     const created = new Date(now - (20 - ti) * DAY * 0.9 - rand() * DAY);
     const size = ti % 5 === 4 ? 1 : 2 + Math.floor(rand() * 3);
@@ -195,10 +212,10 @@ async function main() {
       await db.teamMember.create({ data: { teamId: team.id, userId: u.id, isLead: m === 0, joinedAt: u.createdAt } });
     }
     if (!paid) continue;
+    const simRole = EV_TEMPLATE.roles[simSlot++ % EV_TEMPLATE.roles.length];
+    await db.simVenture.create({ data: { economyId: simEcon.id, teamId: team.id, roleKey: simRole.key, state: JSON.stringify(initialState(EV_TEMPLATE, simRole)) } });
     const skill = 0.35 + rand() * 0.6;
-    await db.attempt.create({
-      data: { roundId: quiz.id, teamId: team.id, startedAt: new Date(now - DAY / 2), submittedAt: new Date(now - DAY / 2 + 15 * 60_000), autoScore: Math.round(quizMax * skill), tabSwitches: rand() > 0.8 ? 3 : 0 },
-    });
+    // Round 1 is a live, host-led quiz: no demo scores, so the host screen starts from an empty lobby.
     if (ti % 3 !== 2)
       await db.attempt.create({
         data: { roundId: excelRound.id, teamId: team.id, startedAt: new Date(now - DAY / 3), submittedAt: new Date(now - DAY / 3 + 40 * 60_000), autoScore: Math.round(excelMax * Math.min(1, skill + (rand() - 0.5) * 0.3)) },

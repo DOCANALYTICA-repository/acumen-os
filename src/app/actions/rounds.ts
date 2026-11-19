@@ -6,7 +6,7 @@ import { db, audit, parseJson } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { getContent } from "@/lib/content";
 import { effectiveStatus, entryBlocker, excelKey, submissionSettings, teamStatus, timeLeftMs } from "@/lib/rounds";
-import { readWorkbookCells, scoreExcel, scoreQuiz, type QuizAnswer } from "@/lib/scoring";
+import { readWorkbookCells, scoreExcel } from "@/lib/scoring";
 import { extOf, resolveStoragePath, saveUpload, type StoredFile } from "@/lib/files";
 import type { FormState } from "./auth";
 
@@ -24,32 +24,27 @@ async function roundContext(roundId: string) {
   return { user, team, round, blocker, live: effectiveStatus(round) === "LIVE" };
 }
 
+/** Scores and closes an Excel attempt. (Quiz rounds are scored by the live quiz host flow.) */
 async function finalizeAttempt(attemptId: string) {
-  const attempt = await db.attempt.findUnique({ where: { id: attemptId }, include: { round: { include: { questions: true } } } });
-  if (!attempt || attempt.submittedAt) return;
-  const answers = parseJson<Record<string, unknown>>(attempt.answers, {});
-  let autoScore = 0;
-  if (attempt.round.type === "QUIZ") autoScore = scoreQuiz(attempt.round.questions, answers as Record<string, QuizAnswer>);
-  else {
-    const key = excelKey(attempt.round);
-    let values = answers as Record<string, string>;
-    if (attempt.fileUrl) {
-      try {
-        const fromBook = readWorkbookCells(await readFile(resolveStoragePath(attempt.fileUrl)), key.map((k) => k.cell));
-        values = Object.fromEntries(key.map((k) => [k.cell, String(values[k.cell] ?? "").trim() || fromBook[k.cell]]));
-      } catch {
-        /* unreadable workbook: score typed answers only */
-      }
+  const attempt = await db.attempt.findUnique({ where: { id: attemptId }, include: { round: true } });
+  if (!attempt || attempt.submittedAt || attempt.round.type !== "EXCEL") return;
+  const key = excelKey(attempt.round);
+  let values = parseJson<Record<string, string>>(attempt.answers, {});
+  if (attempt.fileUrl) {
+    try {
+      const fromBook = readWorkbookCells(await readFile(resolveStoragePath(attempt.fileUrl)), key.map((k) => k.cell));
+      values = Object.fromEntries(key.map((k) => [k.cell, String(values[k.cell] ?? "").trim() || fromBook[k.cell]]));
+    } catch {
+      /* unreadable workbook: score typed answers only */
     }
-    autoScore = scoreExcel(key, values);
   }
-  await db.attempt.update({ where: { id: attempt.id }, data: { submittedAt: new Date(), autoScore } });
+  await db.attempt.update({ where: { id: attempt.id }, data: { submittedAt: new Date(), autoScore: scoreExcel(key, values) } });
 }
 
-/** Called on page load: closes attempts whose timer ran out. */
+/** Called on page load: closes Excel attempts whose timer ran out. */
 export async function finalizeIfExpired(roundId: string, teamId: string) {
   const attempt = await db.attempt.findUnique({ where: { roundId_teamId: { roundId, teamId } }, include: { round: true } });
-  if (!attempt || attempt.submittedAt) return;
+  if (!attempt || attempt.submittedAt || attempt.round.type !== "EXCEL") return;
   const left = timeLeftMs(attempt.round, attempt.startedAt);
   if (left !== null && left <= 0) await finalizeAttempt(attempt.id);
 }
@@ -57,7 +52,7 @@ export async function finalizeIfExpired(roundId: string, teamId: string) {
 export async function startAttempt(fd: FormData) {
   const roundId = String(fd.get("roundId"));
   const { user, team, round, blocker, live } = await roundContext(roundId);
-  if (blocker || !live || round.type === "SUBMISSION") return;
+  if (blocker || !live || round.type !== "EXCEL") return;
   await db.attempt.upsert({
     where: { roundId_teamId: { roundId, teamId: team.id } },
     create: { roundId, teamId: team.id },
@@ -69,6 +64,7 @@ export async function startAttempt(fd: FormData) {
 
 async function openAttempt(roundId: string) {
   const { team, round } = await roundContext(roundId);
+  if (round.type !== "EXCEL") throw new Error("Not an Excel round.");
   const attempt = await db.attempt.findUnique({ where: { roundId_teamId: { roundId, teamId: team.id } } });
   if (!attempt || attempt.submittedAt) throw new Error("This attempt is already submitted.");
   const left = timeLeftMs(round, attempt.startedAt);

@@ -1,7 +1,7 @@
 import type { Round, Team } from "@prisma/client";
 import { parseJson } from "./db";
 
-export type RoundType = "QUIZ" | "EXCEL" | "SUBMISSION";
+export type RoundType = "QUIZ" | "EXCEL" | "SUBMISSION" | "SIMULATION";
 export type EffectiveStatus = "DRAFT" | "UPCOMING" | "LIVE" | "CLOSED";
 
 export type SubmissionSettings = {
@@ -47,7 +47,7 @@ export function effectiveStatus(round: Pick<Round, "status" | "startsAt" | "ends
   return round.startsAt ? "LIVE" : "UPCOMING";
 }
 
-export const TYPE_LABEL: Record<string, string> = { QUIZ: "Quiz", EXCEL: "Excel", SUBMISSION: "Submission" };
+export const TYPE_LABEL: Record<string, string> = { QUIZ: "Quiz", EXCEL: "Excel", SUBMISSION: "Submission", SIMULATION: "Business simulation" };
 
 export type TeamStatus = "INCOMPLETE" | "COMPLETE" | "PAID" | "PAYMENT_REJECTED" | "DISQUALIFIED";
 

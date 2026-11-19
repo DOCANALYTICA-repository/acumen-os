@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import type { Question } from "@prisma/client";
 import { db, parseJson } from "./db";
 import { excelKey, type ExcelKeyItem } from "./rounds";
+import { parseConfig } from "./sim/model";
 
 export type QuizAnswer = number | number[] | boolean | string | null;
 
@@ -99,7 +100,7 @@ export type LeaderboardRow = {
 /** Per-round percentage scores and the weighted overall score for every eligible team. */
 export async function computeLeaderboard() {
   const [rounds, teams, attempts, scores, overrides] = await Promise.all([
-    db.round.findMany({ orderBy: { order: "asc" }, include: { questions: true, criteria: true } }),
+    db.round.findMany({ orderBy: { order: "asc" }, include: { questions: true, criteria: true, economy: { select: { config: true } } } }),
     db.team.findMany({ where: { disqualified: false }, include: { members: { include: { user: true } } } }),
     db.attempt.findMany(),
     db.score.findMany(),
@@ -110,6 +111,7 @@ export async function computeLeaderboard() {
   for (const r of rounds) {
     if (r.type === "QUIZ") maxByRound[r.id] = quizMax(r.questions);
     else if (r.type === "EXCEL") maxByRound[r.id] = excelMax(excelKey(r));
+    else if (r.type === "SIMULATION") maxByRound[r.id] = parseConfig(r.economy?.config).scoring.maxMarks;
     else maxByRound[r.id] = r.criteria.reduce((s, c) => s + c.maxMarks, 0);
   }
 

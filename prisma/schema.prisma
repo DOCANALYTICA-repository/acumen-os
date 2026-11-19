@@ -48,6 +48,7 @@ model Team {
   assignments    JudgeAssignment[]
   scores         Score[]
   overrides      ResultOverride[]
+  ventures       SimVenture[]
 }
 
 model TeamMember {
@@ -65,7 +66,7 @@ model Round {
   id                  String    @id @default(cuid())
   order               Int       @unique
   name                String
-  type                String // QUIZ | EXCEL | SUBMISSION
+  type                String // QUIZ | EXCEL | SUBMISSION | SIMULATION
   description         String    @default("")
   instructions        String    @default("")
   startsAt            DateTime?
@@ -88,6 +89,8 @@ model Round {
   assignments    JudgeAssignment[]
   scores         Score[]
   overrides      ResultOverride[]
+  economy        SimEconomy?
+  liveQuiz       LiveQuiz?
 }
 
 model Question {
@@ -98,11 +101,45 @@ model Question {
   text          String
   options       String @default("[]")
   answer        String // JSON: index, [indexes], true/false, or string
-  marks         Float  @default(1)
-  negativeMarks Float  @default(0)
+  marks         Float  @default(1) // live quiz: 1 mark = up to 1000 points
+  negativeMarks Float  @default(0) // unused by the live quiz
+  timeLimit     Int    @default(20) // live quiz: seconds to answer
   explanation   String @default("")
 
   round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
+}
+
+/// Host-led live quiz session for a QUIZ round. Teams join (an Attempt row), the host moves everyone question by question.
+model LiveQuiz {
+  id           String    @id @default(cuid())
+  roundId      String    @unique
+  status       String    @default("LOBBY") // LOBBY | QUESTION | REVEAL | LEADERBOARD | FINISHED
+  currentIndex Int       @default(-1)
+  questionIds  String    @default("[]") // play order, fixed when the lobby opens
+  opensAt      DateTime? // answers accepted from here (after the get-ready countdown)
+  endsAt       DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  round   Round        @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  answers LiveAnswer[]
+}
+
+model LiveAnswer {
+  id         String   @id @default(cuid())
+  liveId     String
+  questionId String
+  teamId     String
+  userId     String
+  answer     String // JSON
+  correct    Boolean
+  points     Int
+  streak     Int      @default(0)
+  ms         Int // server-measured time from opensAt
+  createdAt  DateTime @default(now())
+
+  live LiveQuiz @relation(fields: [liveId], references: [id], onDelete: Cascade)
+
+  @@unique([liveId, questionId, teamId])
 }
 
 model Attempt {
@@ -221,6 +258,120 @@ model Announcement {
 model Content {
   key   String @id
   value String
+}
+
+// ---------------- Simulation module (Startup Ecosystem round) ----------------
+// One economy per SIMULATION round. All outcomes are computed server-side by src/lib/sim/engine.ts.
+
+model SimEconomy {
+  id           String    @id @default(cuid())
+  roundId      String    @unique
+  template     String    @default("ev-mobility")
+  config       String // JSON EconomyConfig (industry, roles, cycles, finance, scoring)
+  status       String    @default("SETUP") // SETUP | OPEN | PROCESSING | PAUSED | FINISHED
+  currentCycle Int       @default(0) // cycle accepting decisions (1-based); 0 = not started
+  cycleEndsAt  DateTime?
+  pausedMs     Int? // time left in the decision window while PAUSED
+  market       String    @default("{}") // JSON MarketState after the last processed cycle
+  updatedAt    DateTime  @updatedAt
+
+  round     Round         @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  ventures  SimVenture[]
+  decisions SimDecision[]
+  contracts SimContract[]
+  messages  SimMessage[]
+  events    SimEvent[]
+  snapshots SimSnapshot[]
+}
+
+model SimVenture {
+  id        String   @id @default(cuid())
+  economyId String
+  teamId    String
+  roleKey   String
+  state     String   @default("{}") // JSON VentureState (cash, debt, capacity, quality, brand…)
+  createdAt DateTime @default(now())
+
+  economy   SimEconomy    @relation(fields: [economyId], references: [id], onDelete: Cascade)
+  team      Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  decisions SimDecision[]
+  sales     SimContract[] @relation("seller")
+  purchases SimContract[] @relation("buyer")
+
+  @@unique([economyId, teamId])
+}
+
+model SimDecision {
+  id            String   @id @default(cuid())
+  economyId     String
+  ventureId     String
+  cycle         Int
+  data          String // JSON Decision
+  submittedById String?
+  updatedAt     DateTime @updatedAt
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+  venture SimVenture @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+
+  @@unique([ventureId, cycle])
+}
+
+model SimContract {
+  id          String    @id @default(cuid())
+  economyId   String
+  sellerId    String
+  buyerId     String
+  proposerId  String // venture id that proposed it
+  units       Float // per cycle
+  unitPrice   Float
+  startCycle  Int
+  cycles      Int
+  status      String    @default("PROPOSED") // PROPOSED | ACTIVE | REJECTED | WITHDRAWN | COMPLETED
+  note        String    @default("")
+  delivered   Float     @default(0) // cumulative units delivered
+  shortfall   Float     @default(0) // cumulative units not delivered
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+  seller  SimVenture @relation("seller", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer   SimVenture @relation("buyer", fields: [buyerId], references: [id], onDelete: Cascade)
+}
+
+model SimMessage {
+  id        String   @id @default(cuid())
+  economyId String
+  fromId    String? // venture id; null = organisers / system
+  toId      String? // venture id; null = everyone
+  body      String
+  kind      String   @default("CHAT") // CHAT | INTEL | SYSTEM
+  createdAt DateTime @default(now())
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+}
+
+model SimEvent {
+  id          String   @id @default(cuid())
+  economyId   String
+  cycle       Int // applied when this cycle is processed; visible to teams once the cycle opens
+  title       String
+  description String   @default("")
+  effects     String   @default("{}") // JSON EventEffects
+  createdAt   DateTime @default(now())
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+}
+
+model SimSnapshot {
+  id        String @id @default(cuid())
+  economyId String
+  cycle     Int
+  ventureId String // venture id, or "MARKET" for the market report
+  data      String // JSON VentureResult | MarketState
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+
+  @@unique([economyId, cycle, ventureId])
 }
 
 model AuditLog {

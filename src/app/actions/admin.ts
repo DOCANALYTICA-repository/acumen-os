@@ -93,13 +93,18 @@ export async function addQuestion(fd: FormData) {
   await db.question.create({
     data: {
       roundId, type, text: s(fd, "text"), options: JSON.stringify(type === "TRUEFALSE" || type === "SHORT" ? [] : options),
-      answer: JSON.stringify(answer), marks: n(fd, "marks", 1), negativeMarks: n(fd, "negativeMarks", 0), explanation: s(fd, "explanation"), order: count,
+      answer: JSON.stringify(answer), marks: Math.max(0.5, n(fd, "marks", 1)), timeLimit: clampSeconds(n(fd, "timeLimit", 20)), explanation: s(fd, "explanation"), order: count,
     },
   });
   refresh(`/admin/rounds/${roundId}`);
 }
 
-/** CSV columns: type,text,option1|option2|...,answer,marks,negative */
+/** Live-quiz answer window: 5 s to 4 min. */
+function clampSeconds(v: number) {
+  return Math.min(240, Math.max(5, Math.round(v) || 20));
+}
+
+/** CSV columns: type,text,option1|option2|...,answer,marks,seconds */
 export async function importQuestions(fd: FormData) {
   await requireAdmin();
   const roundId = s(fd, "roundId");
@@ -109,7 +114,7 @@ export async function importQuestions(fd: FormData) {
   let order = await db.question.count({ where: { roundId } });
   for (const line of lines.slice(lines[0]?.toLowerCase().startsWith("type") ? 1 : 0)) {
     const cols = line.match(/("([^"]|"")*"|[^,]*)(,|$)/g)?.map((c) => c.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"').trim()) ?? [];
-    const [type, text, opts, ans, marks, neg] = cols;
+    const [type, text, opts, ans, marks, seconds] = cols;
     if (!type || !text) continue;
     const T = type.toUpperCase();
     const options = opts ? opts.split("|").map((o) => o.trim()) : [];
@@ -118,7 +123,7 @@ export async function importQuestions(fd: FormData) {
     if (T === "MULTI") answer = ans.split(/[;|]/).map((x) => Number(x) - 1);
     if (T === "TRUEFALSE") answer = ans.toLowerCase().startsWith("t");
     await db.question.create({
-      data: { roundId, type: T, text, options: JSON.stringify(options), answer: JSON.stringify(answer), marks: Number(marks) || 1, negativeMarks: Number(neg) || 0, order: order++ },
+      data: { roundId, type: T, text, options: JSON.stringify(options), answer: JSON.stringify(answer), marks: Number(marks) || 1, timeLimit: clampSeconds(Number(seconds) || 20), order: order++ },
     });
   }
   refresh(`/admin/rounds/${roundId}`);

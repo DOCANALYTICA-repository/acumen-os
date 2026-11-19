@@ -27,7 +27,7 @@ export const DEFAULT_CONTENT: SiteContent = {
   eventDates: "Dates to be announced",
   registrationDeadline: "",
   heroBlurb:
-    "A five-round business and analytics challenge for college teams: a timed quiz, a live Excel case, and three case submissions judged by industry experts.",
+    "A five-round business and analytics challenge for college teams: a live quiz, an Excel case, a startup ecosystem simulation, and two case submissions judged by industry experts.",
   about:
     "Acumen is an inter-college competition that tests how teams think with numbers, data and strategy. Teams move through five rounds, with the strongest advancing at each stage.",
   prizes: "Prize pool, internships and certificates to be announced.",
@@ -43,7 +43,7 @@ export const DEFAULT_CONTENT: SiteContent = {
   faq: [
     { q: "Who can participate?", a: "Acumen is open to college students only. Teams can include students from different colleges." },
     { q: "How do teams work?", a: "One member creates the team and shares the invite code; teammates join with that code." },
-    { q: "How do rounds work?", a: "Round 1 is a quiz and round 2 is an Excel case, both on this site. Rounds 3 to 5 are file submissions. Top teams advance after each cut-off." },
+    { q: "How do rounds work?", a: "Round 1 is a live quiz: the host shows each question on the main screen and every team answers from a phone or laptop at the same time, with faster correct answers scoring more. Round 2 is an Excel case on this site. Round 3 is a written case submission. Round 4 is a live business simulation: every team runs a startup in one shared economy, negotiating and competing over several cycles. Round 5 is the final pitch. Top teams advance after each cut-off." },
     { q: "How do I pay?", a: "Pay outside the site and upload your payment screenshot and transaction ID from your team dashboard." },
   ],
   sponsors: [],
