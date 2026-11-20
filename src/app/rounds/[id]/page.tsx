@@ -3,9 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db, parseJson } from "@/lib/db";
 import { getContent } from "@/lib/content";
-import { effectiveStatus, entryBlocker, excelKey, submissionSettings, teamStatus, timeLeftMs, TYPE_LABEL } from "@/lib/rounds";
+import { effectiveStatus, entryBlocker, excelKey, manualSettings, submissionSettings, teamStatus, timeLeftMs, TYPE_LABEL } from "@/lib/rounds";
 import { fileUrl, formatBytes, type StoredFile } from "@/lib/files";
-import { finalizeIfExpired, startAttempt } from "@/app/actions/rounds";
+import { finalizeIfExpired, setRoundDone, startAttempt } from "@/app/actions/rounds";
 import { Alert, Badge, Card, Container, PageHeader, cls, fmtDate, statusTone } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 import { playerState } from "@/lib/live-quiz";
@@ -60,6 +60,45 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           </details>
         )}
         {blocker ? <Alert tone="amber">{blocker}</Alert> : <SimView roundId={round.id} teamId={team.id} resultsPublished={round.resultsPublished} />}
+      </Container>
+    );
+  }
+
+  // ---------- Off-platform rounds: mark as done ----------
+  if (round.type === "MANUAL") {
+    const ms = manualSettings(round);
+    const done = !!attempt?.submittedAt;
+    const scored = attempt?.manualScore != null;
+    const markedBy = parseJson<{ markedBy?: string }>(attempt?.answers, {}).markedBy;
+    const open = st === "LIVE" || st === "CLOSED";
+    return (
+      <Container className="py-10">
+        {header}
+        {brief}
+        <Card title="Your team's status">
+          {blocker ? <Alert tone="amber">{blocker}</Alert>
+            : !open ? <Alert tone="amber">Opens {fmtDate(round.startsAt)}.</Alert>
+            : (
+              <div className="space-y-4">
+                <p className="text-sm text-ink/80">This round happens outside this site. When your team has finished, mark it done here so the organisers know. They will verify your work and enter your marks.</p>
+                {ms.link && <a href={ms.link} target="_blank" rel="noreferrer" className={`${cls.btn} ${cls.secondary}`}>{ms.linkLabel}</a>}
+                {done ? (
+                  <Alert tone="green">Marked done{markedBy ? ` by ${markedBy}` : ""} on {fmtDate(attempt!.submittedAt)}.{scored ? (round.resultsPublished ? ` Marks: ${attempt!.manualScore} / ${ms.maxMarks}.` : " The organisers have entered your marks; they appear once results are published.") : " Waiting for the organisers to verify."}</Alert>
+                ) : (
+                  <Alert tone="gray">Not marked done yet.</Alert>
+                )}
+                {!scored && (
+                  <form action={setRoundDone}>
+                    <input type="hidden" name="roundId" value={round.id} />
+                    <input type="hidden" name="done" value={done ? "0" : "1"} />
+                    {done
+                      ? <SubmitButton variant="secondary" pendingText="Updating…" confirm="Undo 'done'? Only do this if your team has not actually finished.">Undo</SubmitButton>
+                      : <SubmitButton pendingText="Saving…" confirm="Mark this round as done for your whole team?">Mark as done</SubmitButton>}
+                  </form>
+                )}
+              </div>
+            )}
+        </Card>
       </Container>
     );
   }

@@ -104,6 +104,30 @@ export async function submitAttempt(roundId: string) {
   revalidatePath("/dashboard");
 }
 
+/** Off-platform rounds: a team member marks the round done (or undoes it before marks are entered). */
+export async function setRoundDone(fd: FormData) {
+  const roundId = String(fd.get("roundId"));
+  const done = fd.get("done") === "1";
+  const { user, team, round, blocker } = await roundContext(roundId);
+  if (round.type !== "MANUAL" || blocker) return;
+  const st = effectiveStatus(round);
+  if (st === "DRAFT" || st === "UPCOMING") return;
+  const existing = await db.attempt.findUnique({ where: { roundId_teamId: { roundId, teamId: team.id } } });
+  if (existing?.manualScore != null) return; // marks entered: locked
+  if (done) {
+    await db.attempt.upsert({
+      where: { roundId_teamId: { roundId, teamId: team.id } },
+      create: { roundId, teamId: team.id, submittedAt: new Date(), answers: JSON.stringify({ markedBy: user.fullName }) },
+      update: { submittedAt: new Date(), answers: JSON.stringify({ markedBy: user.fullName }) },
+    });
+  } else if (existing) {
+    await db.attempt.update({ where: { id: existing.id }, data: { submittedAt: null, answers: "{}" } });
+  }
+  await audit(user.id, done ? "round.mark_done" : "round.unmark_done", `${round.name}:${team.name}`);
+  revalidatePath(`/rounds/${roundId}`);
+  revalidatePath("/dashboard");
+}
+
 export async function uploadWorkbook(_: FormState, fd: FormData): Promise<FormState> {
   const roundId = String(fd.get("roundId"));
   try {

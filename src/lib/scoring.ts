@@ -2,8 +2,9 @@ import "server-only";
 import * as XLSX from "xlsx";
 import type { Question } from "@prisma/client";
 import { db, parseJson } from "./db";
-import { excelKey, type ExcelKeyItem } from "./rounds";
+import { excelKey, manualSettings, type ExcelKeyItem } from "./rounds";
 import { parseConfig } from "./sim/model";
+import { guessPoints, MAX_GUESS_POINTS } from "./live-quiz-types";
 
 export type QuizAnswer = number | number[] | boolean | string | null;
 
@@ -35,6 +36,8 @@ export function isQuizAnswerCorrect(q: Pick<Question, "type" | "answer">, given:
       const n = numericEqual(norm(given), norm(correct), 0);
       return n ?? norm(given) === norm(correct);
     }
+    case "NUMBER": // guesstimate: "correct" = scored any points (within 20%)
+      return typeof given === "number" && typeof correct === "number" && guessPoints(given, correct) > 0;
     default:
       return false;
   }
@@ -80,8 +83,9 @@ export function readWorkbookCells(buf: Buffer, cells: string[]): Record<string, 
   return out;
 }
 
+/** Guesstimate rounds: every question is worth up to 3 points. */
 export function quizMax(questions: Pick<Question, "marks">[]) {
-  return questions.reduce((s, q) => s + q.marks, 0);
+  return questions.length * MAX_GUESS_POINTS;
 }
 
 export function excelMax(key: ExcelKeyItem[]) {
@@ -112,6 +116,7 @@ export async function computeLeaderboard() {
     if (r.type === "QUIZ") maxByRound[r.id] = quizMax(r.questions);
     else if (r.type === "EXCEL") maxByRound[r.id] = excelMax(excelKey(r));
     else if (r.type === "SIMULATION") maxByRound[r.id] = parseConfig(r.economy?.config).scoring.maxMarks;
+    else if (r.type === "MANUAL") maxByRound[r.id] = manualSettings(r).maxMarks;
     else maxByRound[r.id] = r.criteria.reduce((s, c) => s + c.maxMarks, 0);
   }
 
@@ -132,6 +137,10 @@ export async function computeLeaderboard() {
         perRound[r.id] = judges.length
           ? pct(judges.reduce((sum, j) => sum + s.filter((x) => x.judgeId === j).reduce((a, b) => a + b.marks, 0), 0) / judges.length, maxByRound[r.id])
           : null;
+      } else if (r.type === "MANUAL") {
+        // Off-platform: only the organisers' marks count, whether or not the team clicked "done".
+        const a = attempts.find((x) => x.roundId === r.id && x.teamId === t.id);
+        perRound[r.id] = a?.manualScore != null ? pct(a.manualScore, maxByRound[r.id]) : null;
       } else {
         const a = attempts.find((x) => x.roundId === r.id && x.teamId === t.id && x.submittedAt);
         perRound[r.id] = a ? pct((a.autoScore ?? 0) + (a.manualScore ?? 0), maxByRound[r.id]) : null;

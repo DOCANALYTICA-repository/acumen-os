@@ -1,16 +1,12 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
 import { db, audit, parseJson } from "./db";
-import { isQuizAnswerCorrect } from "./scoring";
-import { advanceIfDue, joinLive, loadLive, normaliseAnswer, writeLiveScores } from "./live-quiz";
-import { READY_SECONDS, speedPoints, type LiveResult } from "./live-quiz-types";
+import { joinLive, loadLive, writeLiveScores } from "./live-quiz";
+import { guessPoints, parseGuess, type LiveResult } from "./live-quiz-types";
 
 /*
- * Live quiz commands. These run from the POST /api/live/[roundId] route rather than as server actions:
- * a plain fetch per click cannot get stuck behind other router work, which matters when a room of
- * teams is tapping at once. Every host command names the question it expects, so a double click or a
- * stale screen is a harmless no-op.
+ * Guesstimate round commands, run from POST /api/live/[roundId] (plain fetch, not server actions, so a
+ * click can never stall behind other router work while a room of teams is saving answers).
  */
 
 function refresh(roundId: string) {
@@ -19,28 +15,43 @@ function refresh(roundId: string) {
   revalidatePath("/dashboard");
 }
 
-export type HostCommand = "open" | "next" | "reveal" | "leaderboard" | "finish" | "reset";
+export type HostCommand = "open" | "goto" | "finish" | "reopen" | "reset";
 
-export async function runHostCommand(roundId: string, cmd: HostCommand, expectedIndex: number, adminId: string): Promise<LiveResult> {
+export async function runHostCommand(roundId: string, cmd: HostCommand, index: number, adminId: string): Promise<LiveResult> {
   try {
     switch (cmd) {
       case "open":
         await open(roundId, adminId);
         break;
-      case "next":
-        await next(roundId, expectedIndex);
+      case "goto": {
+        const live = await loadLive(roundId);
+        if (!live || live.status === "FINISHED") throw new Error("No game is running.");
+        const total = parseJson<string[]>(live.questionIds, []).length;
+        if (index < 0 || index >= total) throw new Error("No such question.");
+        await db.liveQuiz.update({ where: { id: live.id }, data: { status: "QUESTION", currentIndex: index } });
         break;
-      case "reveal":
-        await db.liveQuiz.updateMany({ where: { roundId, status: "QUESTION", currentIndex: expectedIndex }, data: { status: "REVEAL", endsAt: new Date() } });
-        break;
-      case "leaderboard":
-        await db.liveQuiz.updateMany({ where: { roundId, status: "REVEAL", currentIndex: expectedIndex }, data: { status: "LEADERBOARD" } });
-        break;
+      }
       case "finish": {
-        const live = await db.liveQuiz.findUnique({ where: { roundId } });
+        const live = await loadLive(roundId);
         if (!live) throw new Error("No game is open.");
-        await finish(live.id);
-        await audit(adminId, "quiz.finish", roundId);
+        const claimed = await db.liveQuiz.updateMany({ where: { id: live.id, status: { not: "FINISHED" } }, data: { status: "FINISHED" } });
+        if (claimed.count) {
+          await writeLiveScores(live);
+          await audit(adminId, "quiz.finish", roundId);
+          refresh(roundId);
+        }
+        break;
+      }
+      case "reopen": {
+        // Undo an accidental "End round": answers become editable again on the last question shown.
+        const live = await loadLive(roundId);
+        if (!live || live.status !== "FINISHED") throw new Error("The round is not ended.");
+        await db.$transaction([
+          db.liveQuiz.update({ where: { id: live.id }, data: { status: live.currentIndex >= 0 ? "QUESTION" : "LOBBY" } }),
+          db.attempt.updateMany({ where: { roundId }, data: { submittedAt: null, autoScore: null } }),
+        ]);
+        await audit(adminId, "quiz.reopen", roundId);
+        refresh(roundId);
         break;
       }
       case "reset":
@@ -60,9 +71,10 @@ export async function runHostCommand(roundId: string, cmd: HostCommand, expected
 /** Opens the lobby: fixes the question order and lets teams join. */
 async function open(roundId: string, adminId: string) {
   const round = await db.round.findUnique({ where: { id: roundId }, include: { questions: { orderBy: { order: "asc" } }, liveQuiz: true } });
-  if (!round || round.type !== "QUIZ") throw new Error("Not a quiz round.");
+  if (!round || round.type !== "QUIZ") throw new Error("Not a guesstimate round.");
   if (round.liveQuiz) throw new Error("A game is already open for this round.");
   if (!round.questions.length) throw new Error("Add questions first.");
+  if (round.questions.some((q) => typeof parseJson<unknown>(q.answer, null) !== "number")) throw new Error("Every question needs a numeric correct answer.");
   if (await db.attempt.count({ where: { roundId } })) throw new Error("This round already has results. Reset the game first.");
   await db.liveQuiz.create({ data: { roundId, questionIds: JSON.stringify(round.questions.map((q) => q.id)) } });
   // Teams can only open a round that is not a draft; keep it visible while the game runs.
@@ -72,60 +84,28 @@ async function open(roundId: string, adminId: string) {
   refresh(roundId);
 }
 
-/** From the lobby, a reveal or the leaderboard to the next question, or ends the game after the last one. */
-async function next(roundId: string, expectedIndex: number) {
+/**
+ * A team saves (or re-saves) its guess for the question the host is showing. Only the current question
+ * is editable; the last save from any teammate wins. Caller has checked the team may play.
+ */
+export async function saveGuess(roundId: string, index: number, raw: unknown, team: { id: string }, userId: string): Promise<LiveResult> {
   const live = await loadLive(roundId);
-  if (!live) throw new Error("No game is open.");
-  if (live.currentIndex !== expectedIndex || !["LOBBY", "REVEAL", "LEADERBOARD"].includes(live.status)) return;
-  const ids = parseJson<string[]>(live.questionIds, []);
-  const nextIndex = live.currentIndex + 1;
-  if (nextIndex >= ids.length) return finish(live.id);
-  const q = await db.question.findUnique({ where: { id: ids[nextIndex] } });
-  if (!q) throw new Error("That question was deleted. Reset the game.");
-  const opensAt = new Date(Date.now() + READY_SECONDS * 1000);
-  await db.liveQuiz.updateMany({
-    where: { id: live.id, currentIndex: expectedIndex, status: live.status },
-    data: { status: "QUESTION", currentIndex: nextIndex, opensAt, endsAt: new Date(opensAt.getTime() + q.timeLimit * 1000) },
-  });
-}
-
-async function finish(liveId: string) {
-  const claimed = await db.liveQuiz.updateMany({ where: { id: liveId, status: { not: "FINISHED" } }, data: { status: "FINISHED" } });
-  if (!claimed.count) return;
-  const live = await db.liveQuiz.findUniqueOrThrow({ where: { id: liveId } });
-  await writeLiveScores(live);
-  refresh(live.roundId);
-}
-
-/** A team locks in its answer to the open question. The first teammate to answer counts. Caller has checked the team may play. */
-export async function submitLiveAnswer(roundId: string, index: number, raw: unknown, team: { id: string }, userId: string): Promise<LiveResult> {
-  const live = await loadLive(roundId);
-  if (!live || live.status !== "QUESTION" || live.currentIndex !== index || !live.opensAt || !live.endsAt) return { ok: false, error: "Time's up for this question." };
-  const now = Date.now();
-  if (now < live.opensAt.getTime()) return { ok: false, error: "Not open yet." };
-  if (now > live.endsAt.getTime() + 750) return { ok: false, error: "Time's up for this question." };
-
+  if (!live || live.status !== "QUESTION") return { ok: false, error: live?.status === "FINISHED" ? "The round has ended; answers are locked." : "No question is open." };
+  if (live.currentIndex !== index) return { ok: false, error: "The host has moved to another question. Your answer was not saved." };
+  const value = parseGuess(raw);
+  if (value === null) return { ok: false, error: "Enter a single number (digits only, commas allowed)." };
   const ids = parseJson<string[]>(live.questionIds, []);
   const q = await db.question.findUnique({ where: { id: ids[index] } });
   if (!q) return { ok: false, error: "Question not found." };
-  const answer = normaliseAnswer(q, raw);
-  if (answer === null) return { ok: false, error: "Pick an answer first." };
+  const correct = parseJson<unknown>(q.answer, null);
+  const points = typeof correct === "number" ? guessPoints(value, correct) : 0;
 
   await joinLive(roundId, team.id);
-  const correct = isQuizAnswerCorrect(q, answer);
-  const ms = Math.max(0, now - live.opensAt.getTime());
-  const prev = index > 0 ? await db.liveAnswer.findUnique({ where: { liveId_questionId_teamId: { liveId: live.id, questionId: ids[index - 1], teamId: team.id } } }) : null;
-  try {
-    await db.liveAnswer.create({
-      data: {
-        liveId: live.id, questionId: q.id, teamId: team.id, userId, answer: JSON.stringify(answer), correct,
-        points: correct ? speedPoints(q.marks, ms, q.timeLimit) : 0, streak: correct ? (prev?.correct ? prev.streak : 0) + 1 : 0, ms,
-      },
-    });
-  } catch (e) {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: false, error: "Your team already answered." };
-    throw e;
-  }
-  await advanceIfDue(live); // closes the question once every team is in
+  const data = { answer: JSON.stringify(value), correct: points > 0, points, userId };
+  await db.liveAnswer.upsert({
+    where: { liveId_questionId_teamId: { liveId: live.id, questionId: q.id, teamId: team.id } },
+    create: { liveId: live.id, questionId: q.id, teamId: team.id, ...data },
+    update: data,
+  });
   return { ok: true };
 }

@@ -1,13 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { FileUp, Network, Sheet, Timer } from "lucide-react";
+import { ClipboardCheck, FileUp, Network, Sheet, Target } from "lucide-react";
 import { scaleIn, stagger } from "./motion";
 
 export type JourneyRound = { id: string; order: number; title: string; type: string; description: string; status: string; window: string };
 
-const ICON = { QUIZ: Timer, EXCEL: Sheet, SUBMISSION: FileUp, SIMULATION: Network } as const;
-const TINT = { QUIZ: "text-sky-600", EXCEL: "text-emerald-600", SUBMISSION: "text-violet-600", SIMULATION: "text-amber-600" } as const;
+const ICON = { QUIZ: Target, EXCEL: Sheet, SUBMISSION: FileUp, SIMULATION: Network, MANUAL: ClipboardCheck } as const;
+const TINT = { QUIZ: "text-sky-600", EXCEL: "text-emerald-600", SUBMISSION: "text-violet-600", SIMULATION: "text-amber-600", MANUAL: "text-violet-600" } as const;
 const STATUS: Record<string, string> = {
   LIVE: "bg-emerald-100 text-emerald-700",
   UPCOMING: "bg-amber-100 text-amber-800",

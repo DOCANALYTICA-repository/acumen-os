@@ -1,74 +1,60 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Flame, Maximize2, Trophy, Users } from "lucide-react";
-import type { HostState, LiveResult, StandingRow } from "@/lib/live-quiz-types";
-import { SLOTS, Shape, TF_SLOTS, TYPE_HINT, TimerRing, answerText, fmtPoints, ordinal, postLive, secondsUntil, useLivePoll } from "@/components/live-quiz-ui";
+import { useCallback, useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Lock, Maximize2, Users } from "lucide-react";
+import { fmtNumber, GUESS_TIERS, type HostState, type LiveResult } from "@/lib/live-quiz-types";
+import { postLive, useLivePoll } from "@/components/live-quiz-ui";
 import { cls } from "@/components/ui";
 
+/** Projector view for the guesstimate round. The host moves everyone between questions, forwards or back. */
 export function HostScreen({ roundId, roundName, roundOrder, initial }: { roundId: string; roundName: string; roundOrder: number; initial: HostState }) {
-  const { state: s, error, now, refetch } = useLivePoll<HostState>(`/api/live/${roundId}?view=host`, initial);
+  const { state: s, error, refetch } = useLivePoll<HostState>(`/api/live/${roundId}?view=host`, initial);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
+  const [showSheet, setShowSheet] = useState(false);
   useEffect(() => setOrigin(window.location.origin), []);
 
   const run = useCallback(
-    async (fn: () => Promise<LiveResult | null>, confirmText?: string) => {
+    async (command: string, index: number, confirmText?: string) => {
       if (busy || (confirmText && !window.confirm(confirmText))) return;
       setBusy(true);
       setMsg(null);
       try {
-        const r = await fn(); // null = no reply in time; the next poll shows what happened
+        const r: LiveResult | null = await postLive(roundId, { command, index });
         if (r && !r.ok) setMsg(r.error);
         await refetch();
       } finally {
         setBusy(false);
       }
     },
-    [busy, refetch],
-  );
-  const cmd = useCallback((command: string, index: number) => () => postLive(roundId, { command, index }), [roundId]);
-
-  const preOpen = s.phase === "QUESTION" && s.opensAt !== null && now !== null && now < s.opensAt;
-  const isLast = s.index + 1 >= s.total;
-
-  const { phase, index } = s;
-  const primary = useMemo<{ label: string; act: () => Promise<LiveResult | null> } | null>(
-    () =>
-      phase === "NONE" ? { label: "Open lobby", act: cmd("open", -1) }
-      : phase === "LOBBY" ? { label: "Start quiz", act: cmd("next", -1) }
-      : phase === "QUESTION" ? { label: "Show answer now", act: cmd("reveal", index) }
-      : phase === "REVEAL" ? { label: "Show leaderboard", act: cmd("leaderboard", index) }
-      : phase === "LEADERBOARD" ? { label: isLast ? "Finish and show podium" : "Next question", act: cmd("next", index) }
-      : null,
-    [phase, index, isLast, cmd],
+    [busy, refetch, roundId],
   );
 
-  // Space / Enter / → drives the game from a clicker or keyboard.
+  const canPrev = s.phase === "QUESTION" && s.index > 0;
+  const canNext = (s.phase === "QUESTION" && s.index + 1 < s.total) || s.phase === "LOBBY";
+  const go = useCallback((delta: number) => run("goto", s.phase === "LOBBY" ? 0 : s.index + delta), [run, s.phase, s.index]);
+
+  // ← / → (or a presentation clicker) move between questions.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!primary || (e.target as HTMLElement)?.closest("input,textarea,select,button")) return;
-      if (e.key === " " || e.key === "Enter" || e.key === "ArrowRight") {
-        e.preventDefault();
-        void run(primary.act);
-      }
+      if ((e.target as HTMLElement)?.closest("input,textarea,select,button")) return;
+      if ((e.key === "ArrowRight" || e.key === "PageDown") && canNext) { e.preventDefault(); void go(1); }
+      if ((e.key === "ArrowLeft" || e.key === "PageUp") && canPrev) { e.preventDefault(); void go(-1); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [primary, run]);
+  }, [canNext, canPrev, go]);
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-10rem)] max-w-7xl flex-col px-4 pb-6">
       <header className="mb-4 flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Live quiz host</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Guesstimate host</div>
           <h1 className="truncate text-xl font-bold text-ink">{roundName}</h1>
         </div>
-        {s.phase !== "NONE" && s.phase !== "LOBBY" && s.index >= 0 && (
-          <span className="rounded-full bg-white/80 px-3 py-1 text-sm font-semibold text-ink shadow-soft">Question {s.index + 1} / {s.total}</span>
-        )}
+        {s.phase === "QUESTION" && <span className="rounded-full bg-white/80 px-3 py-1 text-sm font-semibold text-ink shadow-soft">Question {s.index + 1} / {s.total}</span>}
         <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-sm font-semibold text-ink shadow-soft"><Users className="h-4 w-4" /> {s.teams.length} teams</span>
         <button type="button" onClick={() => document.documentElement.requestFullscreen?.()} className={`${cls.btn} ${cls.secondary}`} title="Full screen" aria-label="Full screen"><Maximize2 className="h-4 w-4" /></button>
         <Link href={`/admin/rounds/${roundId}`} className={`${cls.btn} ${cls.secondary}`}>Round settings</Link>
@@ -79,10 +65,10 @@ export function HostScreen({ roundId, roundName, roundOrder, initial }: { roundI
       <section className="glass flex flex-1 flex-col rounded-3xl p-6 sm:p-10">
         {s.phase === "NONE" && (
           <Center>
-            <h2 className="text-4xl font-bold text-ink sm:text-5xl">Ready to play?</h2>
+            <h2 className="text-4xl font-bold text-ink sm:text-5xl">Guesstimate</h2>
             <p className="mt-3 text-lg text-muted">{s.total} questions. Opening the lobby lets teams join from their phones or laptops.</p>
             {s.total === 0 && <p className="mt-4 text-red-700">Add questions on the round settings page first.</p>}
-            {s.hasResults && <p className="mt-4 max-w-xl text-amber-800">This round already has quiz marks from an earlier game. Reset the game to clear them before opening a new lobby.</p>}
+            {s.hasResults && <p className="mt-4 max-w-xl text-amber-800">This round already has marks from an earlier game. Reset the game to clear them before opening a new lobby.</p>}
           </Center>
         )}
 
@@ -91,181 +77,109 @@ export function HostScreen({ roundId, roundName, roundOrder, initial }: { roundI
             <div className="text-center">
               <p className="text-lg text-muted">Join now</p>
               <h2 className="mt-1 text-3xl font-bold text-ink sm:text-5xl">Sign in at <span className="text-sky-700">{origin.replace(/^https?:\/\//, "") || "the Acumen site"}</span></h2>
-              <p className="mt-3 text-lg text-muted sm:text-xl">Then open <strong className="text-ink">Dashboard → Round {roundOrder}</strong>. One answer per team: the first teammate to tap counts.</p>
+              <p className="mt-3 text-lg text-muted sm:text-xl">Then open <strong className="text-ink">Dashboard → Round {roundOrder}</strong>. Answer each question with one number and press Save.</p>
+              <p className="mt-2 text-muted">Within 5% of the answer = {GUESS_TIERS[0].points} points · within 10% = {GUESS_TIERS[1].points} · within 20% = {GUESS_TIERS[2].points} · further = 0</p>
             </div>
             <div className="mt-10 flex items-center justify-center gap-3 text-2xl font-bold text-ink"><Users className="h-7 w-7" /> {s.teams.length} {s.teams.length === 1 ? "team" : "teams"} joined</div>
             <ul className="mt-6 flex flex-wrap justify-center gap-3">
-              {s.teams.map((t, i) => (
-                <li key={t.id} className={`rounded-full px-5 py-2 text-lg font-semibold text-white shadow-soft ${SLOTS[i % SLOTS.length].bg}`}>{t.name}</li>
-              ))}
+              {s.teams.map((t) => <li key={t.id} className="rounded-full bg-white/90 px-5 py-2 text-lg font-semibold text-ink shadow-soft">{t.name}</li>)}
             </ul>
             {s.teams.length === 0 && <p className="mt-6 text-center text-muted">Waiting for the first team…</p>}
           </div>
         )}
 
         {s.phase === "QUESTION" && s.question && (
-          preOpen ? (
-            <Center>
-              <p className="text-xl font-semibold uppercase tracking-wide text-muted">Question {s.index + 1} of {s.total} · {TYPE_HINT[s.question.type]}</p>
-              <h2 className="mt-4 max-w-4xl text-3xl font-bold text-ink sm:text-5xl">{s.question.text}</h2>
-              <div className="mt-8 text-7xl font-bold tabular-nums text-sky-700">{secondsUntil(s.opensAt, now)}</div>
-            </Center>
-          ) : (
-            <div className="flex flex-1 flex-col">
-              <div className="flex items-start gap-6">
-                <h2 className="flex-1 text-2xl font-bold leading-tight text-ink sm:text-4xl">{s.question.text}</h2>
-                <TimerRing endsAt={s.endsAt} opensAt={s.opensAt} now={now} size={110} />
-              </div>
-              <div className="my-6 text-center text-xl font-semibold text-muted">
-                <span className="text-4xl font-bold tabular-nums text-ink">{s.answered}</span> / {s.teams.length} answered
-              </div>
-              <OptionGrid q={s.question} />
-            </div>
-          )
-        )}
-
-        {s.phase === "REVEAL" && s.question && <Reveal s={s} />}
-
-        {s.phase === "LEADERBOARD" && (
           <div className="flex flex-1 flex-col">
-            <h2 className="mb-6 text-center text-3xl font-bold text-ink sm:text-4xl">Leaderboard</h2>
-            <ol className="mx-auto w-full max-w-3xl space-y-3">
-              {s.standings.slice(0, 5).map((r) => <StandingLine key={r.teamId} r={r} />)}
-            </ol>
-            {s.standings.length > 5 && <p className="mt-4 text-center text-muted">+ {s.standings.length - 5} more teams</p>}
-            {s.nextQuestion && <p className="mt-auto pt-6 text-center text-sm text-muted">Up next: question {s.index + 2} · {TYPE_HINT[s.nextQuestion.type]}</p>}
+            <p className="text-center text-lg font-semibold uppercase tracking-wide text-muted">Question {s.index + 1} of {s.total}</p>
+            <div className="flex flex-1 items-center justify-center">
+              <h2 className="max-w-5xl text-center text-3xl font-bold leading-tight text-ink sm:text-5xl">{s.question.text}</h2>
+            </div>
+            <p className="text-center text-xl text-muted">
+              <span className="text-4xl font-bold tabular-nums text-ink">{s.saved}</span> / {s.teams.length} teams have saved an answer
+            </p>
+            <nav className="mt-6 flex flex-wrap justify-center gap-2" aria-label="Jump to question">
+              {s.questions.map((q, i) => (
+                <button key={q.id} type="button" disabled={busy} onClick={() => run("goto", i)}
+                  className={`h-9 w-9 rounded-full text-sm font-semibold transition ${i === s.index ? "bg-sky-600 text-white" : "bg-white/80 text-ink hover:bg-white"}`}
+                  aria-current={i === s.index ? "step" : undefined} aria-label={`Question ${i + 1}`}>{i + 1}</button>
+              ))}
+            </nav>
           </div>
         )}
 
-        {s.phase === "FINISHED" && <Podium rows={s.standings} />}
+        {s.phase === "FINISHED" && (
+          <div className="flex flex-1 flex-col">
+            <div className="text-center">
+              <Lock className="mx-auto h-10 w-10 text-sky-700" />
+              <h2 className="mt-3 text-3xl font-bold text-ink sm:text-5xl">Answers are locked</h2>
+              <p className="mt-2 text-lg text-muted">Teams can now see their answer sheet. Marks are saved (max {s.maxMarks}); publish them from Results when ready.</p>
+            </div>
+            {showSheet && (
+              <div className="mt-8 grid gap-6 lg:grid-cols-2">
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Answers</h3>
+                  <ol className="space-y-2">
+                    {s.questions.map((q, i) => (
+                      <li key={q.id} className="rounded-xl bg-white/85 px-4 py-3">
+                        <div className="text-sm text-ink">{i + 1}. {q.text}</div>
+                        <div className="mt-1 text-lg font-bold tabular-nums text-emerald-700">{fmtNumber(q.answer)}</div>
+                        {q.note && <div className="text-xs text-muted">{q.note}</div>}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Standings</h3>
+                  <ol className="space-y-2">
+                    {s.standings.map((r) => (
+                      <li key={r.teamId} className="flex items-center gap-3 rounded-xl bg-white/85 px-4 py-3">
+                        <span className="w-8 text-lg font-bold tabular-nums text-muted">{r.rank}</span>
+                        <span className="flex-1 truncate font-semibold text-ink">{r.name}</span>
+                        <span className="text-xs text-muted">{r.answered}/{s.total} answered</span>
+                        <span className="w-16 text-right text-lg font-bold tabular-nums text-ink">{r.points}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <footer className="mt-4 flex flex-wrap items-center gap-3">
-        {primary && (
-          <button type="button" disabled={busy || (s.phase === "NONE" && (s.total === 0 || s.hasResults))} onClick={() => run(primary.act)} className={`${cls.btn} ${cls.primary} px-8 py-3 text-base`}>
-            {busy ? "Working…" : primary.label}
-          </button>
+        {s.phase === "NONE" && (
+          <button type="button" disabled={busy || s.total === 0 || s.hasResults} onClick={() => run("open", -1)} className={`${cls.btn} ${cls.primary} px-8 py-3 text-base`}>Open lobby</button>
         )}
-        {primary && <span className="text-xs text-muted">Space or → also works</span>}
+        {s.phase === "LOBBY" && (
+          <button type="button" disabled={busy} onClick={() => go(1)} className={`${cls.btn} ${cls.primary} px-8 py-3 text-base`}>Show question 1</button>
+        )}
+        {s.phase === "QUESTION" && (
+          <>
+            <button type="button" disabled={busy || !canPrev} onClick={() => go(-1)} className={`${cls.btn} ${cls.secondary} px-5 py-3`}><ChevronLeft className="h-4 w-4" /> Previous</button>
+            <button type="button" disabled={busy || !canNext} onClick={() => go(1)} className={`${cls.btn} ${cls.primary} px-6 py-3`}>Next <ChevronRight className="h-4 w-4" /></button>
+            <span className="text-xs text-muted">← / → also work</span>
+          </>
+        )}
+        {s.phase === "FINISHED" && (
+          <button type="button" onClick={() => setShowSheet((v) => !v)} className={`${cls.btn} ${cls.primary} px-6 py-3`}>{showSheet ? "Hide answers and standings" : "Show answers and standings"}</button>
+        )}
         <div className="ml-auto flex flex-wrap gap-2">
-          {s.phase !== "NONE" && s.phase !== "FINISHED" && (
-            <button type="button" disabled={busy} onClick={() => run(cmd("finish", s.index), "End the game now? Teams keep the points they have and marks are saved.")} className={`${cls.btn} ${cls.secondary}`}>End game now</button>
+          {(s.phase === "QUESTION" || s.phase === "LOBBY") && (
+            <button type="button" disabled={busy} onClick={() => run("finish", s.index, "End the round and lock every team's answers? Teams then see a read-only answer sheet.")} className={`${cls.btn} ${cls.secondary}`}><Lock className="h-4 w-4" /> End round</button>
+          )}
+          {s.phase === "FINISHED" && (
+            <button type="button" disabled={busy} onClick={() => run("reopen", s.index, "Reopen the round? Answers become editable again on the current question and saved marks are cleared until you end it again.")} className={`${cls.btn} ${cls.secondary}`}>Reopen</button>
           )}
           {(s.phase !== "NONE" || s.hasResults) && (
-            <button type="button" disabled={busy} onClick={() => run(cmd("reset", s.index), "Reset the game? This deletes every answer and this round's quiz marks. It cannot be undone.")} className={`${cls.btn} ${cls.danger}`}>Reset game</button>
+            <button type="button" disabled={busy} onClick={() => run("reset", s.index, "Reset the game? This deletes every answer and this round's marks. It cannot be undone.")} className={`${cls.btn} ${cls.danger}`}>Reset game</button>
           )}
         </div>
       </footer>
-      {s.phase === "FINISHED" && <p className="mt-2 text-sm text-muted">Marks are saved to results (1,000 points = 1 mark, max {s.maxMarks}). Publish them from Results when ready.</p>}
     </div>
   );
 }
 
 function Center({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-1 flex-col items-center justify-center text-center">{children}</div>;
-}
-
-function slotsFor(type: string) {
-  return type === "TRUEFALSE" ? TF_SLOTS : SLOTS;
-}
-
-function labelsFor(q: { type: string; options: string[] }) {
-  if (q.type === "TRUEFALSE") return ["True", "False"];
-  if (q.type === "SHORT") return ["Correct", "Wrong"];
-  return q.options;
-}
-
-function OptionGrid({ q }: { q: { type: string; options: string[] } }) {
-  if (q.type === "SHORT") return <p className="mt-auto rounded-2xl bg-white/70 p-6 text-center text-2xl font-semibold text-muted">Teams are typing their answers…</p>;
-  const slots = slotsFor(q.type);
-  return (
-    <ul className="mt-auto grid gap-3 sm:grid-cols-2">
-      {labelsFor(q).map((label, i) => (
-        <li key={i} className={`flex min-h-20 items-center gap-4 rounded-2xl px-5 py-4 text-xl font-semibold text-white shadow-soft sm:text-2xl ${slots[i % slots.length].bg}`}>
-          <Shape shape={slots[i % slots.length].shape} className="h-8 w-8 shrink-0" />
-          <span>{label}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function isCorrectSlot(type: string, answer: unknown, i: number) {
-  if (type === "SINGLE") return answer === i;
-  if (type === "MULTI") return Array.isArray(answer) && answer.includes(i);
-  if (type === "TRUEFALSE") return (i === 0) === answer;
-  return i === 0;
-}
-
-function Reveal({ s }: { s: HostState }) {
-  const q = s.question!;
-  const counts = s.distribution ?? [];
-  const labels = labelsFor(q);
-  const slots = slotsFor(q.type);
-  const top = Math.max(1, ...counts);
-  return (
-    <div className="flex flex-1 flex-col">
-      <h2 className="text-center text-2xl font-bold text-ink sm:text-3xl">{q.text}</h2>
-      <p className="mt-2 text-center text-lg text-muted">
-        Answer: <strong className="text-emerald-700">{answerText(q.type, q.options, q.answer)}</strong> · {s.correctCount} of {s.teams.length} teams correct
-      </p>
-      <div className="mx-auto mt-8 flex h-48 w-full max-w-4xl items-end justify-center gap-4 lg:h-64">
-        {labels.map((label, i) => {
-          const right = isCorrectSlot(q.type, q.answer, i);
-          return (
-            <div key={i} className="flex h-full flex-1 flex-col items-center justify-end" title={`${label}: ${counts[i] ?? 0}`}>
-              <span className="mb-1 text-2xl font-bold tabular-nums text-ink">{counts[i] ?? 0}</span>
-              <div className={`w-full max-w-36 rounded-t-xl ${slots[i % slots.length].bg} ${right ? "" : "opacity-35"}`} style={{ height: `${Math.max(4, ((counts[i] ?? 0) / top) * 100)}%` }} />
-              <div className={`mt-2 flex w-full max-w-36 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-sm font-semibold ${right ? "bg-emerald-600 text-white" : "bg-white/70 text-muted"}`}>
-                {right ? <Check className="h-4 w-4 shrink-0" /> : <Shape shape={slots[i % slots.length].shape} className="h-4 w-4 shrink-0" />}
-                <span className="truncate">{label}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="mt-6 text-center text-sm text-muted">{s.answered} of {s.teams.length} teams answered</p>
-    </div>
-  );
-}
-
-function StandingLine({ r }: { r: StandingRow }) {
-  return (
-    <li className="flex items-center gap-4 rounded-2xl bg-white/85 px-5 py-4 shadow-soft">
-      <span className="w-10 text-2xl font-bold tabular-nums text-muted">{r.rank}</span>
-      <span className="flex-1 truncate text-xl font-semibold text-ink">{r.name}</span>
-      {r.streak >= 2 && <span className="inline-flex items-center gap-1 text-sm font-semibold text-orange-600"><Flame className="h-4 w-4" />{r.streak}</span>}
-      {r.gained > 0 && <span className="text-sm font-semibold text-emerald-700">+{fmtPoints(r.gained)}</span>}
-      <span className="w-28 text-right text-2xl font-bold tabular-nums text-ink">{fmtPoints(r.points)}</span>
-    </li>
-  );
-}
-
-function Podium({ rows }: { rows: StandingRow[] }) {
-  const top = rows.slice(0, 3);
-  const order = [top[1], top[0], top[2]];
-  const heights = ["h-40", "h-56", "h-28"];
-  const tint = ["bg-slate-400", "bg-amber-400", "bg-orange-400"];
-  return (
-    <div className="flex flex-1 flex-col">
-      <h2 className="text-center text-3xl font-bold text-ink sm:text-5xl"><Trophy className="mr-2 inline h-10 w-10 text-amber-500" />Final results</h2>
-      <div className="mx-auto mt-10 flex w-full max-w-3xl items-end justify-center gap-4">
-        {order.map((r, i) =>
-          r ? (
-            <div key={r.teamId} className="flex flex-1 flex-col items-center">
-              <span className="mb-2 text-center text-lg font-bold text-ink sm:text-2xl">{r.name}</span>
-              <span className="mb-2 text-sm font-semibold tabular-nums text-muted">{fmtPoints(r.points)} pts</span>
-              <div className={`flex w-full items-start justify-center rounded-t-2xl pt-3 text-3xl font-bold text-white ${heights[i]} ${tint[i]}`}>{ordinal(r.rank)}</div>
-            </div>
-          ) : <div key={i} className="flex-1" />,
-        )}
-      </div>
-      {rows.length > 3 && (
-        <ol className="mx-auto mt-8 w-full max-w-3xl space-y-2">
-          {rows.slice(3, 10).map((r) => <StandingLine key={r.teamId} r={r} />)}
-        </ol>
-      )}
-      {rows.length === 0 && <p className="mt-8 text-center text-muted">No teams joined this game.</p>}
-    </div>
-  );
 }

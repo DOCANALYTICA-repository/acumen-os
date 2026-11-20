@@ -97,7 +97,7 @@ model Question {
   id            String @id @default(cuid())
   roundId       String
   order         Int    @default(0)
-  type          String // SINGLE | MULTI | TRUEFALSE | SHORT
+  type          String // NUMBER (guesstimate) | SINGLE | MULTI | TRUEFALSE | SHORT
   text          String
   options       String @default("[]")
   answer        String // JSON: index, [indexes], true/false, or string
@@ -113,7 +113,7 @@ model Question {
 model LiveQuiz {
   id           String    @id @default(cuid())
   roundId      String    @unique
-  status       String    @default("LOBBY") // LOBBY | QUESTION | REVEAL | LEADERBOARD | FINISHED
+  status       String    @default("LOBBY") // LOBBY | QUESTION | FINISHED
   currentIndex Int       @default(-1)
   questionIds  String    @default("[]") // play order, fixed when the lobby opens
   opensAt      DateTime? // answers accepted from here (after the get-ready countdown)
@@ -130,12 +130,13 @@ model LiveAnswer {
   questionId String
   teamId     String
   userId     String
-  answer     String // JSON
-  correct    Boolean
-  points     Int
-  streak     Int      @default(0)
-  ms         Int // server-measured time from opensAt
+  answer     String // JSON number (the team's guess)
+  correct    Boolean // scored any points
+  points     Int // 0-3 by % error
+  streak     Int      @default(0) // unused
+  ms         Int      @default(0) // unused
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   live LiveQuiz @relation(fields: [liveId], references: [id], onDelete: Cascade)
 
@@ -268,8 +269,8 @@ model SimEconomy {
   roundId      String    @unique
   template     String    @default("ev-mobility")
   config       String // JSON EconomyConfig (industry, roles, cycles, finance, scoring)
-  status       String    @default("SETUP") // SETUP | OPEN | PROCESSING | PAUSED | FINISHED
-  currentCycle Int       @default(0) // cycle accepting decisions (1-based); 0 = not started
+  status       String    @default("SETUP") // SETUP | AUCTION | OPEN | PROCESSING | PAUSED | FINISHED
+  currentCycle Int       @default(0) // year accepting decisions (1-based); 0 = not started
   cycleEndsAt  DateTime?
   pausedMs     Int? // time left in the decision window while PAUSED
   market       String    @default("{}") // JSON MarketState after the last processed cycle
@@ -282,6 +283,38 @@ model SimEconomy {
   messages  SimMessage[]
   events    SimEvent[]
   snapshots SimSnapshot[]
+  lots      SimAuctionLot[]
+}
+
+/// Setup auction: one lot per business identity (role) and per resource. Teams bid from their base budget.
+model SimAuctionLot {
+  id          String    @id @default(cuid())
+  economyId   String
+  order       Int
+  kind        String // IDENTITY | RESOURCE
+  key         String // role key or resource key
+  name        String
+  description String    @default("")
+  reserve     Float
+  status      String    @default("PENDING") // PENDING | OPEN | SOLD | UNSOLD
+  endsAt      DateTime?
+  winnerId    String? // venture id
+  price       Float?
+  createdAt   DateTime  @default(now())
+
+  economy SimEconomy @relation(fields: [economyId], references: [id], onDelete: Cascade)
+  bids    SimBid[]
+}
+
+model SimBid {
+  id        String   @id @default(cuid())
+  lotId     String
+  ventureId String
+  amount    Float
+  userId    String?
+  createdAt DateTime @default(now())
+
+  lot SimAuctionLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
 }
 
 model SimVenture {
@@ -322,8 +355,10 @@ model SimContract {
   sellerId    String
   buyerId     String
   proposerId  String // venture id that proposed it
-  units       Float // per cycle
-  unitPrice   Float
+  kind        String    @default("SUPPLY") // SUPPLY | LICENSE | LOAN | MARKETING
+  units       Float // supply: units per year
+  unitPrice   Float // supply: price per unit · licence: yearly fee · loan: principal · alliance: yearly fee per partner
+  ratePct     Float     @default(0) // loan interest % per year
   startCycle  Int
   cycles      Int
   status      String    @default("PROPOSED") // PROPOSED | ACTIVE | REJECTED | WITHDRAWN | COMPLETED

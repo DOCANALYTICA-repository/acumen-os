@@ -5,8 +5,9 @@ import { unlink } from "fs/promises";
 import { db, audit } from "@/lib/db";
 import { hashPassword, requireAdmin } from "@/lib/auth";
 import { getContent, saveContent, type SiteContent } from "@/lib/content";
-import { ALL_FILE_TYPES, type ExcelKeyItem, type SubmissionSettings } from "@/lib/rounds";
+import { ALL_FILE_TYPES, manualSettings, type ExcelKeyItem, type ManualSettings, type SubmissionSettings } from "@/lib/rounds";
 import { computeLeaderboard, rankByRound } from "@/lib/scoring";
+import { MAX_GUESS_POINTS, parseGuess } from "@/lib/live-quiz-types";
 import { resolveStoragePath, saveUpload } from "@/lib/files";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
@@ -56,6 +57,12 @@ export async function updateRound(fd: FormData) {
     if (!settings.allowedTypes.length) settings.allowedTypes = ["pdf"];
     data.settings = JSON.stringify(settings);
   }
+  if (round.type === "MANUAL") {
+    const link = s(fd, "link");
+    if (link && !/^https:\/\/\S+$/.test(link)) throw new Error("The link must start with https://");
+    const settings: ManualSettings = { maxMarks: Math.max(1, n(fd, "maxMarks", 100)), link, linkLabel: s(fd, "linkLabel") || "Open assignment" };
+    data.settings = JSON.stringify(settings);
+  }
   if (data.startsAt && data.endsAt && data.endsAt <= data.startsAt) throw new Error("End time must be after start time.");
   await db.round.update({ where: { id }, data });
   await audit(admin.id, "round.update", round.name);
@@ -75,36 +82,35 @@ export async function uploadRoundFile(fd: FormData) {
   refresh(`/admin/rounds/${id}`);
 }
 
+/** Guesstimate question: text plus one numeric correct answer (and an optional note shown with the answer). */
 export async function addQuestion(fd: FormData) {
   await requireAdmin();
   const roundId = s(fd, "roundId");
-  const type = s(fd, "type");
-  const options = s(fd, "options").split("\n").map((o) => o.trim()).filter(Boolean);
-  const rawAnswer = s(fd, "answer");
-  let answer: unknown;
-  if (type === "SINGLE") answer = Number(rawAnswer) - 1;
-  else if (type === "MULTI") answer = rawAnswer.split(",").map((x) => Number(x.trim()) - 1).filter((x) => x >= 0);
-  else if (type === "TRUEFALSE") answer = rawAnswer.toLowerCase().startsWith("t");
-  else answer = rawAnswer;
-  if ((type === "SINGLE" || type === "MULTI") && options.length < 2) throw new Error("Add at least 2 options, one per line.");
-  if (type === "SINGLE" && (Number.isNaN(answer) || (answer as number) < 0 || (answer as number) >= options.length)) throw new Error("Correct option must be the option number, e.g. 2.");
-  if (!s(fd, "text")) throw new Error("Question text is required.");
+  const text = s(fd, "text");
+  const answer = parseGuess(s(fd, "answer"));
+  if (!text) throw new Error("Question text is required.");
+  if (answer === null) throw new Error("The correct answer must be a single number.");
   const count = await db.question.count({ where: { roundId } });
   await db.question.create({
-    data: {
-      roundId, type, text: s(fd, "text"), options: JSON.stringify(type === "TRUEFALSE" || type === "SHORT" ? [] : options),
-      answer: JSON.stringify(answer), marks: Math.max(0.5, n(fd, "marks", 1)), timeLimit: clampSeconds(n(fd, "timeLimit", 20)), explanation: s(fd, "explanation"), order: count,
-    },
+    data: { roundId, type: "NUMBER", text, options: "[]", answer: JSON.stringify(answer), marks: MAX_GUESS_POINTS, explanation: s(fd, "explanation"), order: count },
   });
   refresh(`/admin/rounds/${roundId}`);
 }
 
-/** Live-quiz answer window: 5 s to 4 min. */
-function clampSeconds(v: number) {
-  return Math.min(240, Math.max(5, Math.round(v) || 20));
+/** Moves a question up or down in play order. */
+export async function moveQuestion(fd: FormData) {
+  await requireAdmin();
+  const q = await db.question.findUniqueOrThrow({ where: { id: s(fd, "id") } });
+  const all = await db.question.findMany({ where: { roundId: q.roundId }, orderBy: { order: "asc" } });
+  const i = all.findIndex((x) => x.id === q.id);
+  const j = s(fd, "dir") === "up" ? i - 1 : i + 1;
+  if (j < 0 || j >= all.length) return;
+  [all[i], all[j]] = [all[j], all[i]];
+  await db.$transaction(all.map((x, k) => db.question.update({ where: { id: x.id }, data: { order: k } })));
+  refresh(`/admin/rounds/${q.roundId}`);
 }
 
-/** CSV columns: type,text,option1|option2|...,answer,marks,seconds */
+/** CSV columns: question,answer[,note]. Quote cells that contain commas. */
 export async function importQuestions(fd: FormData) {
   await requireAdmin();
   const roundId = s(fd, "roundId");
@@ -112,21 +118,19 @@ export async function importQuestions(fd: FormData) {
   if (!(file instanceof File)) throw new Error("Choose a CSV file.");
   const lines = (await file.text()).split(/\r?\n/).filter((l) => l.trim());
   let order = await db.question.count({ where: { roundId } });
-  for (const line of lines.slice(lines[0]?.toLowerCase().startsWith("type") ? 1 : 0)) {
+  const skipped: number[] = [];
+  for (const [i, line] of lines.entries()) {
+    if (i === 0 && /^"?question/i.test(line)) continue;
     const cols = line.match(/("([^"]|"")*"|[^,]*)(,|$)/g)?.map((c) => c.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"').trim()) ?? [];
-    const [type, text, opts, ans, marks, seconds] = cols;
-    if (!type || !text) continue;
-    const T = type.toUpperCase();
-    const options = opts ? opts.split("|").map((o) => o.trim()) : [];
-    let answer: unknown = ans;
-    if (T === "SINGLE") answer = Number(ans) - 1;
-    if (T === "MULTI") answer = ans.split(/[;|]/).map((x) => Number(x) - 1);
-    if (T === "TRUEFALSE") answer = ans.toLowerCase().startsWith("t");
+    const [text, ans, note] = cols;
+    const answer = parseGuess(ans ?? "");
+    if (!text || answer === null) { skipped.push(i + 1); continue; }
     await db.question.create({
-      data: { roundId, type: T, text, options: JSON.stringify(options), answer: JSON.stringify(answer), marks: Number(marks) || 1, timeLimit: clampSeconds(Number(seconds) || 20), order: order++ },
+      data: { roundId, type: "NUMBER", text, options: "[]", answer: JSON.stringify(answer), marks: MAX_GUESS_POINTS, explanation: note ?? "", order: order++ },
     });
   }
   refresh(`/admin/rounds/${roundId}`);
+  if (skipped.length) throw new Error(`Imported the rest; skipped line(s) ${skipped.join(", ")} (need question text and a numeric answer).`);
 }
 
 export async function deleteQuestion(fd: FormData) {
@@ -179,6 +183,26 @@ export async function setManualScore(fd: FormData) {
   const v = s(fd, "manualScore");
   const a = await db.attempt.update({ where: { id }, data: { manualScore: v === "" ? null : Number(v) } });
   refresh(`/admin/rounds/${a.roundId}`, "/admin/results");
+}
+
+/** Off-platform rounds: organisers enter a team's marks (whether or not the team marked the round done). */
+export async function setOffPlatformScore(fd: FormData) {
+  const admin = await requireAdmin();
+  const roundId = s(fd, "roundId");
+  const teamId = s(fd, "teamId");
+  const round = await db.round.findUniqueOrThrow({ where: { id: roundId } });
+  if (round.type !== "MANUAL") throw new Error("Not an off-platform round.");
+  const raw = s(fd, "score");
+  const max = manualSettings(round).maxMarks;
+  const score = raw === "" ? null : Number(raw);
+  if (score !== null && (Number.isNaN(score) || score < 0 || score > max)) throw new Error(`Marks must be between 0 and ${max}.`);
+  await db.attempt.upsert({
+    where: { roundId_teamId: { roundId, teamId } },
+    create: { roundId, teamId, manualScore: score },
+    update: { manualScore: score },
+  });
+  await audit(admin.id, "round.manual_score", `${round.name}:${teamId}:${raw || "cleared"}`);
+  refresh(`/admin/rounds/${roundId}`, "/admin/results", "/dashboard");
 }
 
 // ---------------- Results & qualification ----------------

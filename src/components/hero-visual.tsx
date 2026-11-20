@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Network, Sheet, Timer, Trophy } from "lucide-react";
+import { Gavel, Network, Target, Trophy } from "lucide-react";
 
 const ease = [0.22, 1, 0.36, 1] as const;
 
@@ -111,9 +111,9 @@ export function HeroVisual({ className = "" }: { className?: string }) {
         </svg>
       </motion.div>
 
-      <Chip className="left-0 top-[38%]" delay={1.6}><Timer className="h-4 w-4 text-sky-600" /> Live quiz</Chip>
-      <Chip className="left-[26%] top-[11%]" delay={1.9}><Sheet className="h-4 w-4 text-emerald-600" /> Excel case</Chip>
-      <Chip className="-bottom-1 right-[8%]" delay={2.2}><Network className="h-4 w-4 text-amber-600" /> Startup simulation</Chip>
+      <Chip className="left-0 top-[38%]" delay={1.6}><Target className="h-4 w-4 text-sky-600" /> Guesstimate</Chip>
+      <Chip className="left-[26%] top-[11%]" delay={1.9}><Gavel className="h-4 w-4 text-emerald-600" /> Setup auction</Chip>
+      <Chip className="-bottom-1 right-[8%]" delay={2.2}><Network className="h-4 w-4 text-amber-600" /> Economy simulation</Chip>
       <motion.div
         initial={{ opacity: 0, scale: 0.4, rotate: -20 }}
         animate={{ opacity: 1, scale: 1, rotate: 0 }}

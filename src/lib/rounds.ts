@@ -1,7 +1,21 @@
 import type { Round, Team } from "@prisma/client";
 import { parseJson } from "./db";
 
-export type RoundType = "QUIZ" | "EXCEL" | "SUBMISSION" | "SIMULATION";
+/** QUIZ = host-led guesstimate round; MANUAL = played off the platform, teams mark it done and organisers enter marks. */
+export type RoundType = "QUIZ" | "EXCEL" | "SUBMISSION" | "SIMULATION" | "MANUAL";
+
+export type ManualSettings = {
+  maxMarks: number;
+  /** Optional link shown to teams, e.g. the Google Classroom assignment. */
+  link: string;
+  linkLabel: string;
+};
+
+export const DEFAULT_MANUAL_SETTINGS: ManualSettings = { maxMarks: 100, link: "", linkLabel: "Open assignment" };
+
+export function manualSettings(round: Pick<Round, "settings">): ManualSettings {
+  return { ...DEFAULT_MANUAL_SETTINGS, ...parseJson<Partial<ManualSettings>>(round.settings, {}) };
+}
 export type EffectiveStatus = "DRAFT" | "UPCOMING" | "LIVE" | "CLOSED";
 
 export type SubmissionSettings = {
@@ -47,7 +61,13 @@ export function effectiveStatus(round: Pick<Round, "status" | "startsAt" | "ends
   return round.startsAt ? "LIVE" : "UPCOMING";
 }
 
-export const TYPE_LABEL: Record<string, string> = { QUIZ: "Quiz", EXCEL: "Excel", SUBMISSION: "Submission", SIMULATION: "Business simulation" };
+export const TYPE_LABEL: Record<string, string> = {
+  QUIZ: "Guesstimate",
+  EXCEL: "Excel",
+  SUBMISSION: "Submission",
+  SIMULATION: "Economy simulation",
+  MANUAL: "Off-platform",
+};
 
 export type TeamStatus = "INCOMPLETE" | "COMPLETE" | "PAID" | "PAYMENT_REJECTED" | "DISQUALIFIED";
 

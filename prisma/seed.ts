@@ -1,7 +1,7 @@
 /**
- * Seeds a local Acumen database with the 5 rounds (quiz, Excel case, two submission rounds and the
- * Startup Ecosystem simulation as Round 4), sample quiz questions, rubrics, Home content and
- * (optionally) demo teams for analytics, assigned to simulation startups.
+ * Seeds a local Acumen database with the 5 rounds (Round 1 host-led guesstimate, Rounds 2/3/5 played
+ * off the platform with "mark as done" and organiser marks, Round 4 the economy simulation with its
+ * setup auction), sample guesstimate questions, Home content and (optionally) demo teams.
  *
  * Local test accounts (development only — change or delete before going live):
  *   Admin:  admin@acumen.test  / Acumen@Admin2026
@@ -12,11 +12,8 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import * as XLSX from "xlsx";
-import { mkdirSync, writeFileSync } from "fs";
-import path from "path";
 import { EV_TEMPLATE } from "../src/lib/sim/model";
-import { initialMarket, initialState } from "../src/lib/sim/engine";
+import { initialMarket } from "../src/lib/sim/engine";
 
 const db = new PrismaClient();
 const DAY = 86_400_000;
@@ -28,49 +25,15 @@ function rng(seed: number) {
   };
 }
 
-function buildExcelCase() {
-  const regions = ["North", "South", "East", "West"];
-  const months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
-  const rand = rng(42);
-  const rows: { Region: string; Month: string; Units: number; Price: number }[] = [];
-  for (const Region of regions)
-    for (const Month of months)
-      rows.push({ Region, Month, Units: 200 + Math.floor(rand() * 600), Price: 40 + Math.floor(rand() * 4) * 5 });
-
-  const revenue = (r: (typeof rows)[number]) => r.Units * r.Price;
-  const total = rows.reduce((s, r) => s + revenue(r), 0);
-  const byRegion = regions.map((g) => [g, rows.filter((r) => r.Region === g).reduce((s, r) => s + revenue(r), 0)] as const);
-  const best = [...byRegion].sort((a, b) => b[1] - a[1])[0][0];
-  const northAvg = rows.filter((r) => r.Region === "North").reduce((s, r) => s + r.Units, 0) / months.length;
-  const southMar = revenue(rows.find((r) => r.Region === "South" && r.Month === "2026-03")!);
-  const over500 = rows.filter((r) => r.Units > 500).length;
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Data");
-  const answers = XLSX.utils.aoa_to_sheet([
-    ["Question", "Your answer"],
-    ["Q1. Total revenue (Units x Price) across all rows", ""],
-    ["Q2. Region with the highest total revenue", ""],
-    ["Q3. Average monthly units sold in North (2 decimals)", ""],
-    ["Q4. Revenue for South in 2026-03", ""],
-    ["Q5. Number of rows where Units > 500", ""],
-  ]);
-  XLSX.utils.book_append_sheet(wb, answers, "Answers");
-
-  const rel = "rounds/excel/acumen-excel-case.xlsx";
-  const abs = path.join(process.cwd(), "storage", rel);
-  mkdirSync(path.dirname(abs), { recursive: true });
-  writeFileSync(abs, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
-
-  const key = [
-    { cell: "Answers!B2", label: "Q1. Total revenue across all rows", value: String(total), tolerance: 0.01, marks: 4 },
-    { cell: "Answers!B3", label: "Q2. Region with the highest total revenue", value: best, tolerance: 0, marks: 3 },
-    { cell: "Answers!B4", label: "Q3. Average monthly units sold in North", value: northAvg.toFixed(2), tolerance: 0.01, marks: 4 },
-    { cell: "Answers!B5", label: "Q4. Revenue for South in 2026-03", value: String(southMar), tolerance: 0.01, marks: 4 },
-    { cell: "Answers!B6", label: "Q5. Rows where Units > 500", value: String(over500), tolerance: 0, marks: 5 },
-  ];
-  return { rel, key };
-}
+/** Demo guesstimates. The numbers are approximate public figures: check them before using these at the event. */
+const GUESSTIMATES: { text: string; answer: number; note: string }[] = [
+  { text: "How many passenger vehicles were sold in India in FY 2023-24?", answer: 4_220_000, note: "About 4.2 million (SIAM). Demo figure: verify before the event." },
+  { text: "How many UPI transactions were made in India in December 2024?", answer: 16_730_000_000, note: "About 16.7 billion (NPCI). Demo figure: verify before the event." },
+  { text: "How many smartphones were shipped in India in calendar year 2024?", answer: 151_000_000, note: "About 151 million (IDC). Demo figure: verify before the event." },
+  { text: "How many retail petrol pumps are there in India?", answer: 90_000, note: "Roughly 88,000–90,000 in 2024 (PPAC). Demo figure: verify before the event." },
+  { text: "How many passengers does Indian Railways carry on an average day?", answer: 19_000_000, note: "About 6.9 billion passengers a year ÷ 365. Demo figure: verify before the event." },
+  { text: "How long is India's national highway network, in kilometres?", answer: 146_000, note: "About 1.46 lakh km (MoRTH, 2024). Demo figure: verify before the event." },
+];
 
 async function main() {
   // wipe in dependency order
@@ -97,80 +60,68 @@ async function main() {
   await db.user.create({
     data: { fullName: "Acumen Admin", email: "admin@acumen.test", passwordHash: await bcrypt.hash("Acumen@Admin2026", 10), role: "ADMIN", college: "Organizing team" },
   });
-  const judge = await db.user.create({
+  await db.user.create({
     data: { fullName: "Demo Judge", email: "judge@acumen.test", passwordHash: await bcrypt.hash("Acumen@Judge2026", 10), role: "JUDGE", college: "Industry panel" },
   });
 
-  const excel = buildExcelCase();
-
+  // Round 1: host-led guesstimate.
   const quiz = await db.round.create({
     data: {
-      order: 1, name: "Round 1 — Live Quiz", type: "QUIZ", weight: 20, status: "SCHEDULED",
+      order: 1, name: "Round 1 — Guesstimate", type: "QUIZ", weight: 20, status: "SCHEDULED",
       startsAt: new Date(now - DAY), endsAt: new Date(now + 7 * DAY),
-      description: "A fast, live quiz on business, finance and current affairs, run from the main screen.",
-      instructions: "Keep this page open on a phone or laptop. The host shows each question on the main screen and every team answers at the same time. One answer per team: the first teammate to tap locks it in. Correct answers score up to 1,000 points, more the faster you answer.",
+      description: "Estimate the numbers behind the Indian economy. The host shows one question at a time on the main screen.",
+      instructions:
+        "Keep this page open on a phone or laptop. For each question, type one number and press Save; any teammate can save and the latest save counts. " +
+        "You can change your answer while the host is on that question, even if the host comes back to it later.\n" +
+        "Scoring per question: within 5% of the correct answer = 3 points, within 10% = 2, within 20% = 1, otherwise 0. " +
+        "When the round ends you get a read-only answer sheet.",
     },
   });
-  const quizQs = [
-    { type: "SINGLE", text: "Which financial statement shows a company's assets, liabilities and equity at a point in time?", options: ["Income statement", "Balance sheet", "Cash flow statement", "Statement of retained earnings"], answer: 1 },
-    { type: "SINGLE", text: "If revenue is 500 and cost of goods sold is 300, what is the gross margin?", options: ["20%", "40%", "60%", "66%"], answer: 1 },
-    { type: "MULTI", text: "Which of these are current assets? (select all that apply)", options: ["Inventory", "Accounts receivable", "Machinery", "Cash"], answer: [0, 1, 3] },
-    { type: "TRUEFALSE", text: "A higher P/E ratio always means a company is overvalued.", options: [], answer: false },
-    { type: "SINGLE", text: "What does CAGR stand for?", options: ["Compound Annual Growth Rate", "Capital Asset Growth Ratio", "Cumulative Average Gross Return", "Current Asset Growth Rate"], answer: 0 },
-    { type: "SHORT", text: "A product sells 1,200 units at 50 each. What is the revenue? (number only)", options: [], answer: "60000" },
-    { type: "SINGLE", text: "Which Excel function returns a value from a table by matching a key in the first column?", options: ["SUMIF", "VLOOKUP", "COUNTA", "CONCAT"], answer: 1 },
-    { type: "TRUEFALSE", text: "Break-even point is where total revenue equals total costs.", options: [], answer: true },
+  for (const [i, q] of GUESSTIMATES.entries())
+    await db.question.create({ data: { roundId: quiz.id, order: i, type: "NUMBER", text: q.text, options: "[]", answer: JSON.stringify(q.answer), marks: 3, explanation: q.note } });
+
+  // Rounds 2, 3 and 5 happen off the platform: teams mark them done, organisers enter marks.
+  const manual = [
+    { order: 2, name: "Round 2 — On-ground Challenge", status: "SCHEDULED", start: -DAY, end: 7 * DAY, maxMarks: 50, link: "", linkLabel: "Open assignment",
+      description: "This round happens in person at the venue. There is nothing to submit here.",
+      instructions: "When your team has finished the challenge, press “Mark as done”. The organisers verify your work and enter your marks." },
+    { order: 3, name: "Round 3 — Case Brief", status: "SCHEDULED", start: -DAY, end: 10 * DAY, maxMarks: 100, link: "", linkLabel: "Open Google Classroom",
+      description: "Write a 2-page analysis of the case. Submit it on Google Classroom.",
+      instructions: "Upload your file to the Round 3 assignment on Google Classroom, then press “Mark as done” here so the organisers know to check it." },
+    { order: 5, name: "Round 5 — Final Pitch", status: "DRAFT", start: 22 * DAY, end: 28 * DAY, maxMarks: 100, link: "", linkLabel: "Open Google Classroom",
+      description: "Submit your final deck on Google Classroom and pitch to the jury.",
+      instructions: "Upload your deck to the Round 5 assignment on Google Classroom, then press “Mark as done” here." },
   ];
-  for (const [i, q] of quizQs.entries())
-    await db.question.create({
-      data: { roundId: quiz.id, order: i, type: q.type, text: q.text, options: JSON.stringify(q.options), answer: JSON.stringify(q.answer), marks: 1, timeLimit: q.type === "MULTI" || q.type === "SHORT" ? 30 : 20 },
-    });
+  const manualRounds = [];
+  for (const m of manual)
+    manualRounds.push(
+      await db.round.create({
+        data: {
+          order: m.order, name: m.name, type: "MANUAL", weight: 20, status: m.status, startsAt: new Date(now + m.start), endsAt: new Date(now + m.end),
+          description: m.description, instructions: m.instructions, settings: JSON.stringify({ maxMarks: m.maxMarks, link: m.link, linkLabel: m.linkLabel }),
+        },
+      }),
+    );
 
-  const excelRound = await db.round.create({
-    data: {
-      order: 2, name: "Round 2 — Excel Case", type: "EXCEL", weight: 20, status: "SCHEDULED", durationMinutes: 60,
-      startsAt: new Date(now - DAY), endsAt: new Date(now + 7 * DAY),
-      description: "Analyse a sales dataset and answer five questions.",
-      instructions: "Download the workbook, analyse the Data sheet, and enter answers below — or fill the Answers sheet and upload the file.",
-      excelTemplate: excel.rel, excelAnswerKey: JSON.stringify(excel.key),
-    },
-  });
-
-  const subRounds = [];
-  for (const [i, s] of [
-    { order: 3, name: "Round 3 — Case Brief", desc: "Submit a 2-page written analysis of the case.", types: ["pdf", "docx"], start: -DAY, end: 10, final: false },
-    { order: 5, name: "Round 5 — Final Pitch", desc: "Submit your final deck and a pitch video link.", types: ["pdf", "pptx", "mp4"], start: 22 * DAY, end: 28, final: true },
-  ].entries()) {
-    const r = await db.round.create({
-      data: {
-        order: s.order, name: s.name, type: "SUBMISSION", weight: 20, status: i === 0 ? "SCHEDULED" : "DRAFT",
-        startsAt: new Date(now + s.start), endsAt: new Date(now + s.end * DAY), description: s.desc,
-        instructions: "Upload before the deadline. You can replace your file until the round closes; the latest version counts.",
-        settings: JSON.stringify({ allowedTypes: s.types, maxSizeMB: 25, maxFiles: s.final ? 2 : 1, allowResubmit: true, allowLate: false, latePenaltyPct: 0, allowLinks: s.final, anonymousJudging: true }),
-      },
-    });
-    for (const c of [["Insight", 30], ["Feasibility", 25], ["Presentation", 20], ["Use of data", 25]] as const)
-      await db.rubricCriterion.create({ data: { roundId: r.id, name: c[0], maxMarks: c[1] } });
-    subRounds.push(r);
-  }
-
-  // Round 4: the Startup Ecosystem business simulation (economy starts in SETUP; open it from Admin → Simulation control).
+  // Round 4: the economy simulation. Starts in SETUP; run the auction from Admin → Simulation control.
   const simRound = await db.round.create({
     data: {
-      order: 4, name: "Round 4 — Startup Ecosystem", type: "SIMULATION", weight: 20, status: "SCHEDULED",
+      order: 4, name: "Round 4 — Economy Simulation", type: "SIMULATION", weight: 20, status: "SCHEDULED",
       startsAt: new Date(now - DAY), endsAt: new Date(now + 10 * DAY),
-      description: "Run one of ten interconnected startups in a shared electric-mobility economy. Compete and cooperate with the other teams over five cycles of decisions, negotiations and market shocks.",
+      description: "Build a company in a shared electric-mobility economy. Win your business identity and resources at auction, then run your company for five simulated years against the other teams.",
       instructions:
-        "Each cycle, set your price, production, marketing, quality spend, capacity investment and financing before the window closes. All teams' decisions are processed together.\n" +
-        "Negotiate supply contracts with the startups you buy from or sell to. Contracts are binding.\n" +
+        "Setup auction: every team starts with the same budget. Bid for one business identity and, if you like, resources that give a lasting edge. Money you don't spend is your starting cash.\n" +
+        "Each year (about 9 minutes): set price, production, capacity, bank borrowing and spending on marketing, sales, customer service, employees, technology and sustainability. All teams' decisions are processed together.\n" +
+        "Deals: negotiate supply contracts, technology licences, loans and co-marketing alliances with other teams. The deal type is fixed; the numbers are yours to negotiate. Signed deals are binding.\n" +
+        "The economy moves: GDP growth, inflation, interest rates, tax and events change demand and costs.\n" +
         "You may use any outside tools, including AI. The simulation engine alone decides outcomes.\n" +
-        "Final marks: return on equity and brand (relative to other teams) plus contract reliability.",
+        "At the end: awards for most profitable, highest revenue, highest market share and more. Marks combine profit, revenue, market share, satisfaction, brand and reliability.",
     },
   });
   const simEcon = await db.simEconomy.create({ data: { roundId: simRound.id, config: JSON.stringify(EV_TEMPLATE), market: JSON.stringify(initialMarket(EV_TEMPLATE)) } });
   await db.simEvent.createMany({ data: EV_TEMPLATE.scheduledEvents.map((e) => ({ economyId: simEcon.id, cycle: e.cycle, title: e.title, description: e.description, effects: JSON.stringify(e.effects) })) });
 
-  await db.announcement.create({ data: { message: "Registrations are open. Round 1 (Quiz) and Round 2 (Excel) are live for paid teams." } });
+  await db.announcement.create({ data: { message: "Registrations are open. Round 1 (Guesstimate) runs live at the venue; keep your phone handy." } });
 
   if (process.env.SEED_DEMO === "0") return;
 
@@ -183,11 +134,9 @@ async function main() {
   const last = ["Shah", "Iyer", "Mehta", "Rao", "Kapoor", "Nair", "Das", "Singh"];
   const teamNames = ["Bull Run", "Margin Masters", "Pivot Table", "Quant Squad", "Cash Flow Crew", "Delta Force", "Alpha Seekers", "Ledger Legends", "Data Dons", "Blue Chips", "Hedgehogs", "The Arbitrageurs", "Spreadsheet Sages", "Market Makers"];
   const pw = await bcrypt.hash("Demo@2026", 10);
-  const excelMax = excel.key.reduce((s, k) => s + k.marks, 0);
-  const criteria = await db.rubricCriterion.findMany({ where: { roundId: subRounds[0].id } });
+  const [round2, round3] = manualRounds;
 
   let n = 0;
-  let simSlot = 0;
   for (const [ti, name] of teamNames.entries()) {
     const created = new Date(now - (20 - ti) * DAY * 0.9 - rand() * DAY);
     const size = ti % 5 === 4 ? 1 : 2 + Math.floor(rand() * 3);
@@ -199,6 +148,7 @@ async function main() {
         paymentStatus: paid ? "PAID" : "UNPAID", transactionId: paid ? `UPI${Math.floor(rand() * 1e10)}` : null,
       },
     });
+    let leadName = "";
     for (let m = 0; m < size; m++) {
       const f = first[n % first.length], l = last[(n * 3) % last.length];
       n++;
@@ -209,23 +159,21 @@ async function main() {
           city: cities[Math.floor(rand() * cities.length)], source: sources[Math.floor(rand() * sources.length)], createdAt: new Date(created.getTime() + m * 3600_000),
         },
       });
+      if (m === 0) leadName = u.fullName;
       await db.teamMember.create({ data: { teamId: team.id, userId: u.id, isLead: m === 0, joinedAt: u.createdAt } });
     }
     if (!paid) continue;
-    const simRole = EV_TEMPLATE.roles[simSlot++ % EV_TEMPLATE.roles.length];
-    await db.simVenture.create({ data: { economyId: simEcon.id, teamId: team.id, roleKey: simRole.key, state: JSON.stringify(initialState(EV_TEMPLATE, simRole)) } });
     const skill = 0.35 + rand() * 0.6;
-    // Round 1 is a live, host-led quiz: no demo scores, so the host screen starts from an empty lobby.
+    // Round 2 (on-ground): most teams marked done and were scored. Round 3: some marked done, not yet scored.
     if (ti % 3 !== 2)
       await db.attempt.create({
-        data: { roundId: excelRound.id, teamId: team.id, startedAt: new Date(now - DAY / 3), submittedAt: new Date(now - DAY / 3 + 40 * 60_000), autoScore: Math.round(excelMax * Math.min(1, skill + (rand() - 0.5) * 0.3)) },
+        data: {
+          roundId: round2.id, teamId: team.id, startedAt: new Date(now - DAY / 3), submittedAt: new Date(now - DAY / 3 + 40 * 60_000),
+          answers: JSON.stringify({ markedBy: leadName }), manualScore: Math.round(50 * Math.min(1, skill + (rand() - 0.5) * 0.3) * 2) / 2,
+        },
       });
-    if (ti % 2 === 0) {
-      await db.judgeAssignment.create({ data: { roundId: subRounds[0].id, teamId: team.id, judgeId: judge.id } });
-      if (ti % 4 === 0)
-        for (const c of criteria)
-          await db.score.create({ data: { roundId: subRounds[0].id, teamId: team.id, judgeId: judge.id, criterionId: c.id, marks: Math.round(c.maxMarks * Math.min(1, skill + 0.1)) } });
-    }
+    if (ti % 2 === 0)
+      await db.attempt.create({ data: { roundId: round3.id, teamId: team.id, submittedAt: new Date(now - DAY / 6), answers: JSON.stringify({ markedBy: leadName }) } });
   }
 }
 

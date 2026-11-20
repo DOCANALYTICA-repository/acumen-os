@@ -91,7 +91,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                       {blocker && st === "LIVE" && <div className="mt-1 text-xs text-amber-700">{blocker}</div>}
                     </div>
                     <div className="flex items-center gap-2">
-                      {done && <Badge tone="green">{r.type === "SUBMISSION" ? `Submitted v${sub?.version}` : "Submitted"}</Badge>}
+                      {done && <Badge tone="green">{r.type === "SUBMISSION" ? `Submitted v${sub?.version}` : r.type === "MANUAL" ? "Marked done" : r.type === "QUIZ" ? "Played" : "Submitted"}</Badge>}
                       <Badge tone={statusTone(st)}>{st.toLowerCase()}</Badge>
                       <Link href={`/rounds/${r.id}`} className={`${cls.btn} ${cls.secondary} px-3 py-1.5`}>Open</Link>
                     </div>

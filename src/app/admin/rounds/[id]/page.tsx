@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { parseConfig } from "@/lib/sim/model";
 import { db, parseJson } from "@/lib/db";
-import { ALL_FILE_TYPES, excelKey, submissionSettings, TYPE_LABEL } from "@/lib/rounds";
+import { ALL_FILE_TYPES, excelKey, manualSettings, submissionSettings, TYPE_LABEL } from "@/lib/rounds";
 import { excelMax, quizMax } from "@/lib/scoring";
 import { fileUrl } from "@/lib/files";
-import { addQuestion, deleteQuestion, importQuestions, saveExcelKey, saveRubric, setManualScore, updateRound, uploadRoundFile } from "@/app/actions/admin";
+import { fmtNumber } from "@/lib/live-quiz-types";
+import { addQuestion, deleteQuestion, importQuestions, moveQuestion, saveExcelKey, saveRubric, setManualScore, setOffPlatformScore, updateRound, uploadRoundFile } from "@/app/actions/admin";
 import { Badge, Card, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -29,11 +30,20 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
   if (!round) notFound();
   const rules = submissionSettings(round);
   const key = excelKey(round);
+  const manual = manualSettings(round);
   const max =
     round.type === "QUIZ" ? quizMax(round.questions)
     : round.type === "EXCEL" ? excelMax(key)
     : round.type === "SIMULATION" ? parseConfig(round.economy?.config).scoring.maxMarks
+    : round.type === "MANUAL" ? manual.maxMarks
     : round.criteria.reduce((s, c) => s + c.maxMarks, 0);
+  // Off-platform rounds list every team that may enter, so marks can be entered even if a team forgot to click "done".
+  const manualTeams = round.type === "MANUAL"
+    ? await db.team.findMany({
+        where: { paymentStatus: "PAID", disqualified: false, ...(round.restrictToQualified ? { qualifications: { some: { roundId: round.id } } } : {}) },
+        orderBy: { name: "asc" },
+      })
+    : [];
 
   return (
     <>
@@ -62,6 +72,17 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
           <Field label="Description"><textarea name="description" rows={2} defaultValue={round.description} className={cls.input} /></Field>
           <Field label="Instructions"><textarea name="instructions" rows={3} defaultValue={round.instructions} className={cls.input} /></Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="restrictToQualified" defaultChecked={round.restrictToQualified} /> Only qualified teams can enter (set the cut-off on Results)</label>
+
+          {round.type === "MANUAL" && (
+            <div className="rounded-lg border border-line p-4">
+              <div className="mb-3 text-sm font-semibold text-ink">Off-platform round</div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Maximum marks"><input type="number" name="maxMarks" min={1} step="0.5" defaultValue={manual.maxMarks} className={cls.input} /></Field>
+                <Field label="Link for teams" hint="Optional, e.g. the Google Classroom assignment"><input name="link" type="url" placeholder="https://classroom.google.com/…" defaultValue={manual.link} className={cls.input} /></Field>
+                <Field label="Link button text"><input name="linkLabel" defaultValue={manual.linkLabel} className={cls.input} /></Field>
+              </div>
+            </div>
+          )}
 
           {round.type === "SUBMISSION" && (
             <div className="rounded-lg border border-line p-4">
@@ -110,64 +131,53 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
 
       {round.type === "QUIZ" && (
         <>
-          <Card title="Live quiz" className="mb-6">
+          <Card title="Guesstimate (host-led)" className="mb-6">
             <p className="text-sm text-ink/80">
-              This quiz is run live by a host: put the host screen on the projector, teams join from their phones, and everyone answers each question at the same time.
-              Faster correct answers score more (up to 1,000 points per mark, falling to half at the buzzer). Marks are saved here when the game ends.
+              Put the host screen on the projector and open the lobby; teams join from their own devices. Whichever question you show, every team sees that
+              question with a box for one number and a Save button. You can go back to any question and teams can change their saved answer while it is shown.
+              End the round to lock answers: teams then see a read-only answer sheet, and marks are saved here.
             </p>
+            <p className="mt-2 text-sm text-ink/80">Scoring per question: within 5% of the correct answer = 3, within 10% = 2, within 20% = 1, otherwise 0 (max {max} for {round.questions.length} questions).</p>
             <p className="mt-2 text-sm text-muted">
               {round.liveQuiz
-                ? round.liveQuiz.status === "FINISHED" ? "Game finished. Reset it on the host screen to play again."
+                ? round.liveQuiz.status === "FINISHED" ? "Round ended. Answers are locked."
                   : round.liveQuiz.status === "LOBBY" ? "Lobby is open: teams are joining."
-                  : `Game in progress: question ${round.liveQuiz.currentIndex + 1} of ${round.questions.length}.`
+                  : `In progress: showing question ${round.liveQuiz.currentIndex + 1} of ${round.questions.length}.`
                 : "No game open yet."}
             </p>
             <Link href={`/host/${round.id}`} className={`${cls.btn} ${cls.primary} mt-4`}>Open host screen</Link>
           </Card>
           <Card title={`Questions (${round.questions.length})`} className="mb-6">
+            {round.liveQuiz && <p className="mb-3 text-xs text-amber-800">A game is open: question order was fixed when the lobby opened. Changes here apply after a reset.</p>}
             <ol className="space-y-3">
-              {round.questions.map((q, i) => {
-                const opts = parseJson<string[]>(q.options, []);
-                const ans = parseJson<unknown>(q.answer, null);
-                const shown = q.type === "SINGLE" ? opts[ans as number] : q.type === "MULTI" ? (ans as number[]).map((x) => opts[x]).join(", ") : String(ans);
-                return (
-                  <li key={q.id} className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
-                    <div className="text-sm">
-                      <div className="font-medium text-ink">{i + 1}. {q.text}</div>
-                      {opts.length > 0 && <div className="mt-1 text-xs text-muted">{opts.join(" · ")}</div>}
-                      <div className="mt-1 text-xs"><Badge tone="green">Answer: {shown}</Badge> <Badge>{q.type}</Badge> <Badge>{q.marks} {q.marks === 1 ? "mark" : "marks"}</Badge> <Badge>{q.timeLimit}s</Badge></div>
-                    </div>
+              {round.questions.map((q, i) => (
+                <li key={q.id} className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
+                  <div className="text-sm">
+                    <div className="font-medium text-ink">{i + 1}. {q.text}</div>
+                    <div className="mt-1 text-xs"><Badge tone="green">Answer: {fmtNumber(parseJson<number | null>(q.answer, null))}</Badge>{q.explanation && <span className="ml-2 text-muted">{q.explanation}</span>}</div>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <form action={moveQuestion}><input type="hidden" name="id" value={q.id} /><input type="hidden" name="dir" value="up" /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" disabled={i === 0}>↑</SubmitButton></form>
+                    <form action={moveQuestion}><input type="hidden" name="id" value={q.id} /><input type="hidden" name="dir" value="down" /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" disabled={i === round.questions.length - 1}>↓</SubmitButton></form>
                     <form action={deleteQuestion}><input type="hidden" name="id" value={q.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm="Delete this question?">Delete</SubmitButton></form>
-                  </li>
-                );
-              })}
+                  </div>
+                </li>
+              ))}
             </ol>
           </Card>
           <div className="mb-6 grid gap-6 xl:grid-cols-2">
             <Card title="Add question">
               <form action={addQuestion} className="space-y-3">
                 <input type="hidden" name="roundId" value={round.id} />
-                <Field label="Type">
-                  <select name="type" className={cls.input}>
-                    <option value="SINGLE">Single choice</option>
-                    <option value="MULTI">Multiple select</option>
-                    <option value="TRUEFALSE">True / false</option>
-                    <option value="SHORT">Short answer</option>
-                  </select>
-                </Field>
-                <Field label="Question"><textarea name="text" rows={2} required className={cls.input} /></Field>
-                <Field label="Options" hint="One per line (choice questions only)"><textarea name="options" rows={4} className={cls.input} /></Field>
-                <Field label="Correct answer" hint="Option number (e.g. 2), several for multiple select (1,3), true/false, or the exact text/number"><input name="answer" required className={cls.input} /></Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Marks" hint="2 = double points"><input type="number" step="0.5" min={0.5} name="marks" defaultValue={1} className={cls.input} /></Field>
-                  <Field label="Time to answer (seconds)"><input type="number" min={5} max={240} name="timeLimit" defaultValue={20} className={cls.input} /></Field>
-                </div>
+                <Field label="Question"><textarea name="text" rows={2} required className={cls.input} placeholder="How many cups of tea are sold in India each day?" /></Field>
+                <Field label="Correct answer" hint="One number. Commas are fine (e.g. 1,200,000)."><input name="answer" required inputMode="decimal" className={cls.input} /></Field>
+                <Field label="Note (optional)" hint="Shown with the answer, e.g. the source or unit"><input name="explanation" className={cls.input} /></Field>
                 <SubmitButton>Add question</SubmitButton>
               </form>
             </Card>
             <Card title="Import from CSV">
-              <p className="mb-3 text-sm text-muted">Columns: <code>type,text,options,answer,marks,seconds</code>. Options separated by <code>|</code>; answers are option numbers (multi: <code>1;3</code>). Seconds defaults to 20.</p>
-              <pre className="mb-3 overflow-x-auto rounded bg-surface p-2 text-xs">SINGLE,&quot;What is 2+2?&quot;,3|4|5,2,1,20</pre>
+              <p className="mb-3 text-sm text-muted">Columns: <code>question,answer,note</code> (note optional). Put quotes around any cell that contains a comma.</p>
+              <pre className="mb-3 overflow-x-auto rounded bg-surface p-2 text-xs">&quot;How many petrol pumps are there in India?&quot;,90000,PPAC 2024</pre>
               <form action={importQuestions} className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="roundId" value={round.id} />
                 <input type="file" name="file" accept=".csv" className={`${cls.input} max-w-xs`} />
@@ -227,7 +237,40 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
         </Card>
       )}
 
-      {round.type !== "SUBMISSION" && (
+      {round.type === "MANUAL" && (
+        <Card title={`Teams (${manualTeams.length}) · ${round.attempts.filter((a) => a.submittedAt).length} marked done · ${round.attempts.filter((a) => a.manualScore != null).length} scored`}>
+          {manualTeams.length === 0 ? <p className="text-sm text-muted">No eligible teams yet.</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr><th className={cls.th}>Team</th><th className={cls.th}>Marked done</th><th className={cls.th}>Marks (out of {manual.maxMarks})</th></tr></thead>
+                <tbody>
+                  {manualTeams.map((t) => {
+                    const a = round.attempts.find((x) => x.teamId === t.id);
+                    const by = parseJson<{ markedBy?: string }>(a?.answers, {}).markedBy;
+                    return (
+                      <tr key={t.id} className="border-t border-line">
+                        <td className={cls.td}>{t.name}</td>
+                        <td className={`${cls.td} text-xs`}>{a?.submittedAt ? <>{fmtDate(a.submittedAt)}{by ? ` · ${by}` : ""}</> : <Badge tone="amber">not yet</Badge>}</td>
+                        <td className={cls.td}>
+                          <form action={setOffPlatformScore} className="flex gap-1">
+                            <input type="hidden" name="roundId" value={round.id} />
+                            <input type="hidden" name="teamId" value={t.id} />
+                            <input name="score" type="number" step="0.5" min={0} max={manual.maxMarks} defaultValue={a?.manualScore ?? ""} className={`${cls.input} w-24 py-1`} aria-label={`Marks for ${t.name}`} />
+                            <SubmitButton variant="secondary" className="px-2 py-1 text-xs">Save</SubmitButton>
+                          </form>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-muted">Clear a mark and save to remove it. Marks appear to teams once results are published.</p>
+        </Card>
+      )}
+
+      {round.type !== "SUBMISSION" && round.type !== "MANUAL" && (
         <Card title={round.type === "SIMULATION" ? `Final simulation marks (${round.attempts.length})` : `Attempts (${round.attempts.length})`}>
           {round.attempts.length === 0 ? <p className="text-sm text-muted">No attempts yet.</p> : (
             <div className="overflow-x-auto">

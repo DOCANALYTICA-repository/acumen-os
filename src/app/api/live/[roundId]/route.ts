@@ -4,12 +4,12 @@ import { getCurrentUser } from "@/lib/auth";
 import { getContent } from "@/lib/content";
 import { entryBlocker, teamStatus } from "@/lib/rounds";
 import { hostState, playerState } from "@/lib/live-quiz";
-import { runHostCommand, submitLiveAnswer, type HostCommand } from "@/lib/live-quiz-commands";
+import { runHostCommand, saveGuess, type HostCommand } from "@/lib/live-quiz-commands";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
-const HOST_COMMANDS: HostCommand[] = ["open", "next", "reveal", "leaderboard", "finish", "reset"];
+const HOST_COMMANDS: HostCommand[] = ["open", "goto", "finish", "reopen", "reset"];
 
 /** The signed-in participant's team, if it may play this quiz round; otherwise an error response. */
 async function playingTeam(roundId: string) {
@@ -26,7 +26,7 @@ async function playingTeam(roundId: string) {
   return { user, team };
 }
 
-/** Polled once a second by the host screen (?view=host) and by each team's answer pad. */
+/** Polled about once a second by the host screen (?view=host) and by each team's answer screen. */
 export async function GET(req: Request, { params }: { params: Promise<{ roundId: string }> }) {
   const { roundId } = await params;
   if (new URL(req.url).searchParams.get("view") === "host") {
@@ -62,5 +62,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ roundId
 
   const ctx = await playingTeam(roundId);
   if (ctx.error) return ctx.error;
-  return NextResponse.json(await submitLiveAnswer(roundId, index, body.answer, ctx.team, ctx.user.id), { headers: NO_STORE });
+  return NextResponse.json(await saveGuess(roundId, index, body.answer, ctx.team, ctx.user.id), { headers: NO_STORE });
 }
