@@ -1,5 +1,4 @@
 import { db, parseJson } from "@/lib/db";
-import { getContent } from "@/lib/content";
 import { excelKey, teamStatus } from "@/lib/rounds";
 import { computeLeaderboard, excelItemCorrect, isQuizAnswerCorrect, type QuizAnswer } from "@/lib/scoring";
 import { Card, PageHeader, Stat, cls, DownloadLink } from "@/components/ui";
@@ -17,7 +16,6 @@ function countBy<T>(items: T[], key: (t: T) => string | null | undefined, top = 
 const day = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10);
 
 export default async function Analytics() {
-  const content = await getContent();
   const [users, teams, rounds, attempts, submissions, assignments, scores] = await Promise.all([
     db.user.findMany({ where: { role: "PARTICIPANT" }, include: { membership: true } }),
     db.team.findMany({ include: { _count: { select: { members: true } } } }),
@@ -30,7 +28,7 @@ export default async function Analytics() {
   const { rows } = await computeLeaderboard();
 
   // ---- registrations ----
-  const statuses = teams.map((t) => teamStatus(t, t._count.members, content.teamMin));
+  const statuses = teams.map((t) => teamStatus(t, t._count.members));
   const paidTeams = statuses.filter((s) => s === "PAID").length;
   const dates = users.map((u) => day(u.createdAt)).sort();
   const daily: { date: string; signups: number; total: number }[] = [];
@@ -55,7 +53,6 @@ export default async function Analytics() {
     { stage: "In a complete team", count: completeTeamsMembers },
     { stage: "In a paid team", count: paidMembers },
   ];
-  const sizes = countBy(teams, (t) => `${t._count.members} member${t._count.members === 1 ? "" : "s"}`, 10).sort((a, b) => a.name.localeCompare(b.name));
 
   // ---- performance ----
   const eligible = paidTeams;
@@ -103,17 +100,15 @@ export default async function Analytics() {
       <PageHeader title="Analytics" subtitle="Registrations and team performance, live from the database" actions={<DownloadLink href="/api/admin/export/leaderboard">Export leaderboard</DownloadLink>} />
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Registrations</h2>
-      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3">
         <Stat label="Participants" value={users.length} />
         <Stat label="Teams" value={teams.length} hint={`${statuses.filter((s) => s !== "INCOMPLETE").length} complete · ${statuses.filter((s) => s === "INCOMPLETE").length} incomplete`} />
         <Stat label="Paid teams" value={paidTeams} hint={`${teams.length - paidTeams} unpaid or other`} />
-        <Stat label="Avg team size" value={teams.length ? (teams.reduce((s, t) => s + t._count.members, 0) / teams.length).toFixed(1) : "—"} />
       </div>
       <div className="mb-6 grid gap-6 xl:grid-cols-2">
         <Card title="Cumulative sign-ups"><Trend data={daily} x="date" y="total" label="Participants" /></Card>
         <Card title="Sign-ups per day"><Bars data={daily} x="date" y="signups" label="Sign-ups" /></Card>
         <Card title="Registration funnel (people)"><Funnel stages={funnel} /></Card>
-        <Card title="Team size"><Bars data={sizes} x="name" y="count" label="Teams" /></Card>
         <Card title="Top colleges"><Bars data={countBy(users, (u) => u.college)} x="name" y="count" label="Participants" horizontal /></Card>
         <Card title="Top cities"><Bars data={countBy(users, (u) => u.city)} x="name" y="count" label="Participants" horizontal /></Card>
         <Card title="How they heard about Acumen"><Bars data={countBy(users, (u) => u.source)} x="name" y="count" label="Participants" horizontal /></Card>

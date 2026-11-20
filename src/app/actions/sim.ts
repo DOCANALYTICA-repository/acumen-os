@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { db, audit } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
-import { getContent } from "@/lib/content";
 import { entryBlocker, teamStatus } from "@/lib/rounds";
 import { sanitizeDecision } from "@/lib/sim/engine";
 import { DEAL_KINDS, inputNeed, LEVERS, parseConfig, roleOf, spotPrice, type DealKind } from "@/lib/sim/model";
@@ -24,9 +23,8 @@ async function simContext(roundId: string) {
   if (!team) throw new Error("Join a team first.");
   const round = await db.round.findUnique({ where: { id: roundId }, include: { economy: true } });
   if (!round || round.type !== "SIMULATION" || !round.economy) throw new Error("Simulation not found.");
-  const content = await getContent();
   const qualified = !!(await db.qualification.findUnique({ where: { roundId_teamId: { roundId, teamId: team.id } } }));
-  const blocker = entryBlocker({ round, status: teamStatus(team, team.members.length, content.teamMin), qualified });
+  const blocker = entryBlocker({ round, status: teamStatus(team, team.members.length), qualified });
   if (blocker) throw new Error(blocker);
   await maybeAdvance(round.economy.id);
   const econ = await db.simEconomy.findUniqueOrThrow({ where: { id: round.economy.id } });

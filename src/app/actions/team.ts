@@ -5,6 +5,7 @@ import { db, audit } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { getContent, registrationOpen } from "@/lib/content";
 import { saveUpload } from "@/lib/files";
+import { TEAM_SIZE } from "@/lib/rounds";
 import type { FormState } from "./auth";
 
 const BLOCKED_WORDS = ["fuck", "shit", "bitch", "bastard", "asshole", "dick", "slut"];
@@ -70,8 +71,7 @@ export async function joinTeam(_: FormState, fd: FormData): Promise<FormState> {
   const team = await db.team.findUnique({ where: { inviteCode: code }, include: { members: true } });
   if (!team) return { error: "No team found with that invite code." };
   if (team.disqualified) return { error: "This team can no longer accept members." };
-  const { teamMax } = await getContent();
-  if (team.members.length >= teamMax) return { error: `This team is full (${teamMax} members max).` };
+  if (team.members.length >= TEAM_SIZE) return { error: `This team is full (teams are ${TEAM_SIZE} people).` };
 
   await db.teamMember.create({ data: { teamId: team.id, userId: user.id } });
   await audit(user.id, "team.join", team.name);

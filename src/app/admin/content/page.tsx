@@ -27,8 +27,6 @@ export default async function AdminContent() {
             <Field label="Tagline"><input name="tagline" defaultValue={c.tagline} className={cls.input} /></Field>
             <Field label="Event dates (shown on Home)"><input name="eventDates" defaultValue={c.eventDates} className={cls.input} /></Field>
             <Field label="Registration deadline (IST)" hint="Rosters lock after this. Leave empty to keep open."><input type="datetime-local" name="registrationDeadline" defaultValue={toIstInput(c.registrationDeadline)} className={cls.input} /></Field>
-            <Field label="Min team size"><input type="number" min={1} name="teamMin" defaultValue={c.teamMin} className={cls.input} /></Field>
-            <Field label="Max team size"><input type="number" min={1} name="teamMax" defaultValue={c.teamMax} className={cls.input} /></Field>
             <Field label="Registration fee (text)"><input name="fee" defaultValue={c.fee} className={cls.input} /></Field>
             <Field label="Contact email"><input name="contactEmail" defaultValue={c.contactEmail} className={cls.input} /></Field>
             <Field label="Contact phone"><input name="contactPhone" defaultValue={c.contactPhone} className={cls.input} /></Field>

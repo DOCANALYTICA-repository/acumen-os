@@ -121,7 +121,6 @@ async function main() {
   const simEcon = await db.simEconomy.create({ data: { roundId: simRound.id, config: JSON.stringify(EV_TEMPLATE), market: JSON.stringify(initialMarket(EV_TEMPLATE)) } });
   await db.simEvent.createMany({ data: EV_TEMPLATE.scheduledEvents.map((e) => ({ economyId: simEcon.id, cycle: e.cycle, title: e.title, description: e.description, effects: JSON.stringify(e.effects) })) });
 
-  await db.announcement.create({ data: { message: "Registrations are open. Round 1 (Guesstimate) runs live at the venue; keep your phone handy." } });
 
   if (process.env.SEED_DEMO === "0") return;
 
@@ -139,7 +138,7 @@ async function main() {
   let n = 0;
   for (const [ti, name] of teamNames.entries()) {
     const created = new Date(now - (20 - ti) * DAY * 0.9 - rand() * DAY);
-    const size = ti % 5 === 4 ? 1 : 2 + Math.floor(rand() * 3);
+    const size = ti % 5 === 4 ? 1 : 2; // teams are pairs; every 5th demo team is still waiting for its partner
     const college = colleges[Math.floor(rand() * colleges.length)];
     const paid = ti % 5 !== 4 && ti !== 11;
     const team = await db.team.create({

@@ -1,6 +1,5 @@
 import "server-only";
 import { db, parseJson } from "@/lib/db";
-import { getContent } from "@/lib/content";
 import { teamStatus } from "@/lib/rounds";
 import { computeAwards, finalMetrics, initialMarket, initialState, mergePerks, processCycle, scoreVentures, type EngineContract } from "./engine";
 import { parseConfig, roleOf, TEMPLATES, type DealKind, type Decision, type EconomyConfig, type MarketState, type Perks, type VentureResult, type VentureState } from "./model";
@@ -30,13 +29,12 @@ export async function createEconomy(roundId: string, template = "ev-mobility") {
 
 /** Teams that may play: paid, not disqualified, complete, and qualified if the round requires it. */
 export async function eligibleTeams(roundId: string) {
-  const [round, teams, quals, content] = await Promise.all([
+  const [round, teams, quals] = await Promise.all([
     db.round.findUniqueOrThrow({ where: { id: roundId } }),
     db.team.findMany({ include: { _count: { select: { members: true } } }, orderBy: { createdAt: "asc" } }),
     db.qualification.findMany({ where: { roundId } }),
-    getContent(),
   ]);
-  return teams.filter((t) => teamStatus(t, t._count.members, content.teamMin) === "PAID" && (!round.restrictToQualified || quals.some((q) => q.teamId === t.id)));
+  return teams.filter((t) => teamStatus(t, t._count.members) === "PAID" && (!round.restrictToQualified || quals.some((q) => q.teamId === t.id)));
 }
 
 function shuffle<T>(items: T[], seed: string) {

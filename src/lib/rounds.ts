@@ -69,11 +69,14 @@ export const TYPE_LABEL: Record<string, string> = {
   MANUAL: "Off-platform",
 };
 
+/** Acumen teams are exactly this many people. */
+export const TEAM_SIZE = 2;
+
 export type TeamStatus = "INCOMPLETE" | "COMPLETE" | "PAID" | "PAYMENT_REJECTED" | "DISQUALIFIED";
 
-export function teamStatus(team: Pick<Team, "paymentStatus" | "disqualified">, memberCount: number, teamMin: number): TeamStatus {
+export function teamStatus(team: Pick<Team, "paymentStatus" | "disqualified">, memberCount: number): TeamStatus {
   if (team.disqualified) return "DISQUALIFIED";
-  if (memberCount < teamMin) return "INCOMPLETE";
+  if (memberCount < TEAM_SIZE) return "INCOMPLETE";
   if (team.paymentStatus === "REJECTED") return "PAYMENT_REJECTED";
   if (team.paymentStatus === "PAID") return "PAID";
   return "COMPLETE";
@@ -94,7 +97,7 @@ export function entryBlocker(opts: {
   qualified: boolean;
 }): string | null {
   if (opts.status === "DISQUALIFIED") return "Your team has been disqualified.";
-  if (opts.status === "INCOMPLETE") return "Your team needs more members before entering rounds.";
+  if (opts.status === "INCOMPLETE") return `Your team needs ${TEAM_SIZE} members before entering rounds.`;
   if (opts.status !== "PAID") return "Upload your payment proof to unlock rounds.";
   if (opts.round.restrictToQualified && !opts.qualified) return "Only teams that qualified from the previous round can enter.";
   return null;

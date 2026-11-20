@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db, parseJson } from "@/lib/db";
-import { getContent } from "@/lib/content";
 import { effectiveStatus, entryBlocker, excelKey, manualSettings, submissionSettings, teamStatus, timeLeftMs, TYPE_LABEL } from "@/lib/rounds";
 import { fileUrl, formatBytes, type StoredFile } from "@/lib/files";
 import { finalizeIfExpired, setRoundDone, startAttempt } from "@/app/actions/rounds";
@@ -24,9 +23,8 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   if (!team) redirect("/dashboard");
 
   if (round.type === "EXCEL") await finalizeIfExpired(round.id, team.id);
-  const content = await getContent();
   const st = effectiveStatus(round);
-  const status = teamStatus(team, team.members.length, content.teamMin);
+  const status = teamStatus(team, team.members.length);
   const qualified = !!(await db.qualification.findUnique({ where: { roundId_teamId: { roundId: round.id, teamId: team.id } } }));
   const blocker = entryBlocker({ round, status, qualified });
   const attempt = await db.attempt.findUnique({ where: { roundId_teamId: { roundId: round.id, teamId: team.id } } });

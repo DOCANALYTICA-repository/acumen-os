@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, parseJson } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { getContent } from "@/lib/content";
 import { teamStatus, TEAM_STATUS_LABEL } from "@/lib/rounds";
 import { computeLeaderboard } from "@/lib/scoring";
 import type { StoredFile } from "@/lib/files";
@@ -23,12 +22,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
   const rows: (string | number | null | undefined)[][] = [];
 
   if (kind === "teams") {
-    const content = await getContent();
     const teams = await db.team.findMany({ include: { members: { include: { user: true } } }, orderBy: { name: "asc" } });
     rows.push(["team", "status", "payment_status", "transaction_id", "member_name", "is_lead", "email", "phone", "college", "year", "city"]);
     for (const t of teams)
       for (const m of t.members)
-        rows.push([t.name, TEAM_STATUS_LABEL[teamStatus(t, t.members.length, content.teamMin)], t.paymentStatus, t.transactionId, m.user.fullName, m.isLead ? "yes" : "", m.user.email, m.user.phone, m.user.college, m.user.year, m.user.city]);
+        rows.push([t.name, TEAM_STATUS_LABEL[teamStatus(t, t.members.length)], t.paymentStatus, t.transactionId, m.user.fullName, m.isLead ? "yes" : "", m.user.email, m.user.phone, m.user.college, m.user.year, m.user.city]);
   } else if (kind === "participants") {
     const users = await db.user.findMany({ where: { role: "PARTICIPANT" }, include: { membership: { include: { team: true } } }, orderBy: { createdAt: "asc" } });
     rows.push(["name", "email", "phone", "college", "year", "city", "source", "team", "registered_at"]);

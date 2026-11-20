@@ -1,14 +1,12 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { getContent } from "@/lib/content";
 import { effectiveStatus, teamStatus } from "@/lib/rounds";
 import { Badge, Card, PageHeader, Stat, cls, fmtDate, statusTone } from "@/components/ui";
 
 export const metadata = { title: "Admin · Acumen" };
 
 export default async function AdminHome() {
-  const [content, users, teams, rounds, assignments, scores, logs] = await Promise.all([
-    getContent(),
+  const [users, teams, rounds, assignments, scores, logs] = await Promise.all([
     db.user.count({ where: { role: "PARTICIPANT" } }),
     db.team.findMany({ include: { _count: { select: { members: true } } } }),
     db.round.findMany({ orderBy: { order: "asc" }, include: { _count: { select: { attempts: true, submissions: true } } } }),
@@ -16,7 +14,7 @@ export default async function AdminHome() {
     db.score.findMany({ select: { roundId: true, teamId: true, judgeId: true } }),
     db.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 8 }),
   ]);
-  const statuses = teams.map((t) => teamStatus(t, t._count.members, content.teamMin));
+  const statuses = teams.map((t) => teamStatus(t, t._count.members));
   const today = new Date(Date.now() - 86_400_000);
   const newToday = await db.user.count({ where: { role: "PARTICIPANT", createdAt: { gte: today } } });
   const pendingJudging = assignments.filter((a) => !scores.some((x) => x.roundId === a.roundId && x.teamId === a.teamId && x.judgeId === a.judgeId)).length;

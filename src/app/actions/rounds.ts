@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { readFile } from "fs/promises";
 import { db, audit, parseJson } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
-import { getContent } from "@/lib/content";
 import { effectiveStatus, entryBlocker, excelKey, submissionSettings, teamStatus, timeLeftMs } from "@/lib/rounds";
 import { readWorkbookCells, scoreExcel } from "@/lib/scoring";
 import { extOf, resolveStoragePath, saveUpload, type StoredFile } from "@/lib/files";
@@ -17,8 +16,7 @@ async function roundContext(roundId: string) {
   if (!team) throw new Error("Join a team first.");
   const round = await db.round.findUnique({ where: { id: roundId } });
   if (!round) throw new Error("Round not found.");
-  const content = await getContent();
-  const status = teamStatus(team, team.members.length, content.teamMin);
+  const status = teamStatus(team, team.members.length);
   const qualified = !!(await db.qualification.findUnique({ where: { roundId_teamId: { roundId, teamId: team.id } } }));
   const blocker = entryBlocker({ round, status, qualified });
   return { user, team, round, blocker, live: effectiveStatus(round) === "LIVE" };

@@ -5,7 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getContent, registrationOpen } from "@/lib/content";
 import { computeLeaderboard } from "@/lib/scoring";
-import { effectiveStatus, entryBlocker, teamStatus, TEAM_STATUS_LABEL, TYPE_LABEL } from "@/lib/rounds";
+import { effectiveStatus, entryBlocker, teamStatus, TEAM_SIZE, TEAM_STATUS_LABEL, TYPE_LABEL } from "@/lib/rounds";
 import { fileUrl } from "@/lib/files";
 import { leaveTeam, regenerateInvite, removeMember, transferLead } from "@/app/actions/team";
 import { Alert, Badge, Card, Container, PageHeader, cls, fmtDate, statusTone } from "@/components/ui";
@@ -42,7 +42,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   const isLead = user.membership!.isLead;
   const locked = !registrationOpen(content);
-  const status = teamStatus(team, team.members.length, content.teamMin);
+  const status = teamStatus(team, team.members.length);
   const host = (await headers()).get("host");
   const inviteLink = `http://${host}/dashboard?code=${team.inviteCode}`;
 
@@ -64,7 +64,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       />
 
       {status === "INCOMPLETE" && (
-        <div className="mb-6"><Alert tone="amber">Your team needs at least {content.teamMin} members. Share the invite code below.</Alert></div>
+        <div className="mb-6"><Alert tone="amber">Your team needs {TEAM_SIZE} members. Share the invite code below with your teammate.</Alert></div>
       )}
       {status === "PAYMENT_REJECTED" && (
         <div className="mb-6"><Alert tone="red">The organizers rejected your payment proof. The team lead should upload a new one.</Alert></div>
@@ -137,9 +137,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-xs text-muted">{team.members.length} of {content.teamMax} members{locked ? " · roster locked" : ""}</p>
+            <p className="mt-3 text-xs text-muted">{team.members.length} of {TEAM_SIZE} members{locked ? " · roster locked" : ""}</p>
 
-            {!locked && (
+            {!locked && team.members.length < TEAM_SIZE && (
               <div className="mt-5 rounded-lg bg-surface p-3">
                 <div className="text-xs font-medium text-muted">Invite code</div>
                 <div className="mt-1 flex items-center justify-between gap-2">
@@ -184,7 +184,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                   <p className="mt-1 whitespace-pre-line text-muted">{content.paymentInstructions}</p>
                 </div>
                 {status === "INCOMPLETE" ? (
-                  <p className="text-sm text-muted">Payment opens once your team has {content.teamMin} members.</p>
+                  <p className="text-sm text-muted">Payment opens once your team has {TEAM_SIZE} members.</p>
                 ) : isLead ? (
                   <PaymentForm />
                 ) : (

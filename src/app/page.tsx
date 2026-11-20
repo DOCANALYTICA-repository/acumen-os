@@ -3,7 +3,7 @@ import { ArrowRight, CalendarDays, Download, GraduationCap, Layers, Mail, Sparkl
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { getContent, registrationOpen } from "@/lib/content";
-import { effectiveStatus } from "@/lib/rounds";
+import { effectiveStatus, TEAM_SIZE } from "@/lib/rounds";
 import { fileUrl } from "@/lib/files";
 import { fmtDate } from "@/components/ui";
 import { Countdown } from "@/components/countdown";
@@ -128,7 +128,7 @@ export default async function Home() {
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-ink sm:text-[34px]">What is {content.eventName}?</h2>
               <p className="mt-4 whitespace-pre-line leading-relaxed text-muted">{content.about}</p>
               <div className="mt-6 flex flex-wrap gap-2">
-                {["College students only", `Teams of ${content.teamMin}–${content.teamMax}`, `Fee: ${content.fee}`].map((t) => (
+                {["College students only", `Teams of ${TEAM_SIZE}`, `Fee: ${content.fee}`].map((t) => (
                   <span key={t} className="rounded-full border border-white/70 bg-white/70 px-3 py-1.5 text-xs font-semibold text-ink shadow-soft">{t}</span>
                 ))}
               </div>
@@ -205,7 +205,7 @@ export default async function Home() {
             <div className="relative flex flex-col items-start gap-6 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="max-w-xl text-2xl font-bold leading-snug text-white sm:text-3xl">Ready to prove your {content.eventName.toLowerCase()}?</h2>
-                <p className="mt-2 text-sm text-sky-50/90">Register, build your team of {content.teamMin}–{content.teamMax}, and take on Round 1.</p>
+                <p className="mt-2 text-sm text-sky-50/90">Register, build your team of {TEAM_SIZE}, and take on Round 1.</p>
               </div>
               <Link href="/register" className="group inline-flex shrink-0 items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-sky-700 shadow-soft transition-all duration-300 hover:shadow-glass-lg">
                 Register now <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />

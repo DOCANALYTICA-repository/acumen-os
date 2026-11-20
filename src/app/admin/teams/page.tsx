@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { getContent } from "@/lib/content";
-import { teamStatus, TEAM_STATUS_LABEL, type TeamStatus } from "@/lib/rounds";
+import { TEAM_SIZE, teamStatus, TEAM_STATUS_LABEL, type TeamStatus } from "@/lib/rounds";
 import { fileUrl } from "@/lib/files";
 import { adminRemoveMember, saveTeamNote, setPaymentStatus, toggleDisqualify } from "@/app/actions/admin";
 import { Badge, Card, PageHeader, cls, fmtDate, statusTone, DownloadLink } from "@/components/ui";
@@ -11,13 +10,12 @@ const FILTERS: [string, string][] = [["all", "All"], ["INCOMPLETE", "Incomplete"
 
 export default async function AdminTeams({ searchParams }: { searchParams: Promise<{ q?: string; filter?: string }> }) {
   const { q = "", filter = "all" } = await searchParams;
-  const content = await getContent();
   const teams = await db.team.findMany({ include: { members: { include: { user: true }, orderBy: { joinedAt: "asc" } } }, orderBy: { createdAt: "desc" } });
   const txnCount = new Map<string, number>();
   for (const t of teams) if (t.transactionId) txnCount.set(t.transactionId, (txnCount.get(t.transactionId) ?? 0) + 1);
 
   const rows = teams
-    .map((t) => ({ t, status: teamStatus(t, t.members.length, content.teamMin) as TeamStatus, dup: !!t.transactionId && txnCount.get(t.transactionId)! > 1 }))
+    .map((t) => ({ t, status: teamStatus(t, t.members.length) as TeamStatus, dup: !!t.transactionId && txnCount.get(t.transactionId)! > 1 }))
     .filter(({ t, status, dup }) => {
       if (filter === "dup" && !dup) return false;
       if (filter !== "all" && filter !== "dup" && status !== filter) return false;
@@ -50,7 +48,7 @@ export default async function AdminTeams({ searchParams }: { searchParams: Promi
                   <Badge tone={statusTone(status)}>{TEAM_STATUS_LABEL[status]}</Badge>
                   {dup && <Badge tone="red">Duplicate txn ID</Badge>}
                 </div>
-                <div className="mt-1 text-xs text-muted">Created {fmtDate(t.createdAt)} · code <span className="font-mono">{t.inviteCode}</span> · {t.members.length}/{content.teamMax} members</div>
+                <div className="mt-1 text-xs text-muted">Created {fmtDate(t.createdAt)} · code <span className="font-mono">{t.inviteCode}</span> · {t.members.length}/{TEAM_SIZE} members</div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {t.paymentStatus !== "PAID" && t.paymentScreenshot && (

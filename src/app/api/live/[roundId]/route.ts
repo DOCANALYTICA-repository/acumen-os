@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { getContent } from "@/lib/content";
 import { entryBlocker, teamStatus } from "@/lib/rounds";
 import { hostState, playerState } from "@/lib/live-quiz";
 import { runHostCommand, saveGuess, type HostCommand } from "@/lib/live-quiz-commands";
@@ -19,9 +18,8 @@ async function playingTeam(roundId: string) {
   if (user.role !== "PARTICIPANT" || !team) return { error: NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 }) };
   const round = await db.round.findUnique({ where: { id: roundId } });
   if (!round || round.type !== "QUIZ" || round.status === "DRAFT") return { error: NextResponse.json({ ok: false, error: "Not found" }, { status: 404 }) };
-  const content = await getContent();
   const qualified = !!(await db.qualification.findUnique({ where: { roundId_teamId: { roundId, teamId: team.id } } }));
-  const blocker = entryBlocker({ round, status: teamStatus(team, team.members.length, content.teamMin), qualified });
+  const blocker = entryBlocker({ round, status: teamStatus(team, team.members.length), qualified });
   if (blocker) return { error: NextResponse.json({ ok: false, error: blocker }, { status: 403 }) };
   return { user, team };
 }

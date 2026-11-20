@@ -360,8 +360,6 @@ export async function saveSiteContent(fd: FormData) {
     heroBlurb: s(fd, "heroBlurb"),
     about: s(fd, "about"),
     prizes: s(fd, "prizes"),
-    teamMin: Math.max(1, n(fd, "teamMin", current.teamMin)),
-    teamMax: Math.max(1, n(fd, "teamMax", current.teamMax)),
     fee: s(fd, "fee"),
     paymentInstructions: s(fd, "paymentInstructions"),
     contactEmail: s(fd, "contactEmail"),
@@ -371,7 +369,6 @@ export async function saveSiteContent(fd: FormData) {
     faq,
     sponsors,
   };
-  if (next.teamMin > next.teamMax) throw new Error("Minimum team size cannot exceed maximum.");
   await saveContent(next);
   await audit(admin.id, "content.update");
   refresh("/admin/content");
