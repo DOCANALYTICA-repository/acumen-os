@@ -1,13 +1,15 @@
-// Acumen event platform — local-first schema (SQLite).
-// Swap provider to "postgresql" for deployment; JSON-ish fields are stored as strings.
+// Acumen event platform schema (PostgreSQL, hosted on Supabase). JSON-ish fields are stored as strings.
+// DATABASE_URL: Supabase pooled connection (port 6543, ?pgbouncer=true) used by the running app.
+// DIRECT_URL:   Supabase direct/session connection (port 5432) used by `prisma db push`.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -32,7 +34,6 @@ model User {
 model Team {
   id                String    @id @default(cuid())
   name              String    @unique
-  inviteCode        String    @unique
   paymentScreenshot String?
   transactionId     String?
   paymentStatus     String    @default("UNPAID") // UNPAID | PAID | REJECTED
@@ -66,20 +67,17 @@ model Round {
   id                  String    @id @default(cuid())
   order               Int       @unique
   name                String
-  type                String // QUIZ | EXCEL | SUBMISSION | SIMULATION
+  type                String // QUIZ | SUBMISSION | SIMULATION | MANUAL
   description         String    @default("")
   instructions        String    @default("")
   startsAt            DateTime?
   endsAt              DateTime?
-  durationMinutes     Int? // quiz / excel timer
   weight              Float     @default(20)
   status              String    @default("DRAFT") // DRAFT | SCHEDULED | LIVE | CLOSED
   resultsPublished    Boolean   @default(false)
   restrictToQualified Boolean   @default(false)
   settings            String    @default("{}") // submission rules etc.
-  briefFile           String?
-  excelTemplate       String?
-  excelAnswerKey      String    @default("[]") // [{cell,label,value,tolerance,marks}]
+  briefUrl            String? // link to the brief (Google Drive, Classroom…)
 
   questions      Question[]
   attempts       Attempt[]
@@ -150,10 +148,8 @@ model Attempt {
   startedAt   DateTime  @default(now())
   submittedAt DateTime?
   answers     String    @default("{}")
-  fileUrl     String?
   autoScore   Float?
   manualScore Float?
-  tabSwitches Int       @default(0)
 
   round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
   team  Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -166,8 +162,7 @@ model Submission {
   roundId      String
   teamId       String
   uploadedById String
-  files        String // JSON [{path,name,size,type}]
-  links        String   @default("[]")
+  links        String   @default("[]") // JSON string[] of https:// links
   title        String   @default("")
   summary      String   @default("")
   version      Int      @default(1)
@@ -244,7 +239,7 @@ model Asset {
   id         String   @id @default(cuid())
   title      String
   category   String   @default("General")
-  filePath   String
+  url        String
   visibility String   @default("PUBLIC") // PUBLIC | PARTICIPANTS
   createdAt  DateTime @default(now())
 }
@@ -388,7 +383,9 @@ model SimMessage {
 model SimEvent {
   id          String   @id @default(cuid())
   economyId   String
-  cycle       Int // applied when this cycle is processed; visible to teams once the cycle opens
+  cycle       Int // SCHEDULED: applied when this cycle is processed; visible to teams once the cycle opens. SAVED: 0
+  status      String   @default("SCHEDULED") // SCHEDULED (tied to a year) | SAVED (library; organisers run it during an open year)
+  firedCycle  Int? // SAVED: the last year it was run in
   title       String
   description String   @default("")
   effects     String   @default("{}") // JSON EventEffects
@@ -415,4 +412,12 @@ model AuditLog {
   action    String
   detail    String   @default("")
   createdAt DateTime @default(now())
+}
+
+/// Fixed-window request counters (e.g. registrations per IP per hour). Lives in the database so the
+/// limit holds across Vercel's many short-lived server instances.
+model RateLimit {
+  key         String   @id // "<bucket>:<identifier>"
+  count       Int      @default(0)
+  windowStart DateTime @default(now())
 }

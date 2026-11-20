@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { db, parseJson } from "@/lib/db";
-import { fileUrl, formatBytes, type StoredFile } from "@/lib/files";
 import { assignJudge, autoAssign, setOverride, unassignJudge } from "@/app/actions/admin";
 import { Badge, Card, Empty, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
@@ -60,8 +59,7 @@ export default async function AdminSubmissions({ searchParams }: { searchParams:
                     <div className="flex items-center gap-2"><h3 className="font-semibold text-ink">{s.team.name}</h3><Badge>v{s.version}</Badge>{s.isLate && <Badge tone="red">Late</Badge>}</div>
                     <div className="text-xs text-muted">{s.title || "Untitled"} · by {s.uploadedBy.fullName} · {fmtDate(s.submittedAt)}</div>
                     <ul className="mt-2 space-y-1 text-sm">
-                      {parseJson<StoredFile[]>(s.files, []).map((f) => <li key={f.path}><a href={fileUrl(f.path)} target="_blank" className={cls.ghost}>{f.name}</a> <span className="text-xs text-muted">{formatBytes(f.size)}</span></li>)}
-                      {parseJson<string[]>(s.links, []).map((l) => <li key={l}><a href={l} target="_blank" rel="noreferrer" className={cls.ghost}>{l}</a></li>)}
+                      {parseJson<string[]>(s.links, []).map((l) => <li key={l}><a href={l} target="_blank" rel="noreferrer" className={`${cls.ghost} break-all`}>{l}</a></li>)}
                     </ul>
                   </div>
                   <div className="text-right text-sm">

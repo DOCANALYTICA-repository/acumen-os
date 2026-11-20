@@ -9,6 +9,7 @@
  *   Demo participants: <first>.<last>@demo.acumen.test / Demo@2026
  *
  * Run: npm run db:reset   (wipes and reseeds)   |   SEED_DEMO=0 to skip demo teams
+ * Deployed database, once: npm run db:setup (no wipe, no test accounts; admin from ADMIN_EMAIL / ADMIN_PASSWORD)
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
@@ -36,6 +37,28 @@ const GUESSTIMATES: { text: string; answer: number; note: string }[] = [
 ];
 
 async function main() {
+  // --production (npm run db:setup): first setup of a deployed database. Never wipes; does nothing once rounds exist.
+  // Creates the 5 rounds and one admin from ADMIN_EMAIL / ADMIN_PASSWORD. No judge, no demo teams.
+  const production = process.env.SEED_MODE === "production" || process.argv.includes("--production");
+  if (production) {
+    if ((await db.round.count()) > 0) {
+      console.log("Production seed skipped: rounds already exist.");
+      return;
+    }
+    const email = (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const password = process.env.ADMIN_PASSWORD ?? "";
+    if (!email || password.length < 12) throw new Error("Set ADMIN_EMAIL and ADMIN_PASSWORD (12+ characters) for the first production boot.");
+    if (!(await db.user.findUnique({ where: { email } })))
+      await db.user.create({ data: { fullName: "Acumen Admin", email, passwordHash: await bcrypt.hash(password, 10), role: "ADMIN", college: "Organizing team" } });
+  } else {
+    await wipeAndCreateTestAccounts();
+  }
+  const manualRounds = await createRounds();
+  if (production || process.env.SEED_DEMO === "0") return;
+  await createDemoTeams(manualRounds);
+}
+
+async function wipeAndCreateTestAccounts() {
   // wipe in dependency order
   await db.$transaction([
     db.score.deleteMany(),
@@ -56,14 +79,16 @@ async function main() {
     db.auditLog.deleteMany(),
   ]);
 
-  const now = Date.now();
   await db.user.create({
     data: { fullName: "Acumen Admin", email: "admin@acumen.test", passwordHash: await bcrypt.hash("Acumen@Admin2026", 10), role: "ADMIN", college: "Organizing team" },
   });
   await db.user.create({
     data: { fullName: "Demo Judge", email: "judge@acumen.test", passwordHash: await bcrypt.hash("Acumen@Judge2026", 10), role: "JUDGE", college: "Industry panel" },
   });
+}
 
+async function createRounds() {
+  const now = Date.now();
   // Round 1: host-led guesstimate.
   const quiz = await db.round.create({
     data: {
@@ -87,10 +112,10 @@ async function main() {
       instructions: "When your team has finished the challenge, press “Mark as done”. The organisers verify your work and enter your marks." },
     { order: 3, name: "Round 3 — Case Brief", status: "SCHEDULED", start: -DAY, end: 10 * DAY, maxMarks: 100, link: "", linkLabel: "Open Google Classroom",
       description: "Write a 2-page analysis of the case. Submit it on Google Classroom.",
-      instructions: "Upload your file to the Round 3 assignment on Google Classroom, then press “Mark as done” here so the organisers know to check it." },
+      instructions: "Upload your file to the Round 3 assignment on Google Classroom, then press “Mark as done” here so the organisers know to check it. You can paste the link to your Classroom submission when you mark it done." },
     { order: 5, name: "Round 5 — Final Pitch", status: "DRAFT", start: 22 * DAY, end: 28 * DAY, maxMarks: 100, link: "", linkLabel: "Open Google Classroom",
       description: "Submit your final deck on Google Classroom and pitch to the jury.",
-      instructions: "Upload your deck to the Round 5 assignment on Google Classroom, then press “Mark as done” here." },
+      instructions: "Upload your deck to the Round 5 assignment on Google Classroom, then press “Mark as done” here. You can paste the link to your Classroom submission when you mark it done." },
   ];
   const manualRounds = [];
   for (const m of manual)
@@ -121,9 +146,11 @@ async function main() {
   const simEcon = await db.simEconomy.create({ data: { roundId: simRound.id, config: JSON.stringify(EV_TEMPLATE), market: JSON.stringify(initialMarket(EV_TEMPLATE)) } });
   await db.simEvent.createMany({ data: EV_TEMPLATE.scheduledEvents.map((e) => ({ economyId: simEcon.id, cycle: e.cycle, title: e.title, description: e.description, effects: JSON.stringify(e.effects) })) });
 
+  return manualRounds;
+}
 
-  if (process.env.SEED_DEMO === "0") return;
-
+async function createDemoTeams(manualRounds: { id: string }[]) {
+  const now = Date.now();
   // ---- demo teams for analytics ----
   const rand = rng(7);
   const colleges = ["St. Xavier's College", "Christ University", "SRCC", "NMIMS", "Loyola College", "IIM Indore (IPM)", "Symbiosis", "Hindu College"];
@@ -143,7 +170,7 @@ async function main() {
     const paid = ti % 5 !== 4 && ti !== 11;
     const team = await db.team.create({
       data: {
-        name, inviteCode: `D${String(ti).padStart(2, "0")}${Math.floor(rand() * 9000 + 1000)}`, createdAt: created,
+        name, createdAt: created,
         paymentStatus: paid ? "PAID" : "UNPAID", transactionId: paid ? `UPI${Math.floor(rand() * 1e10)}` : null,
       },
     });

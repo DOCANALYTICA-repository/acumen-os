@@ -73,7 +73,7 @@ export async function simLoadTemplate(fd: FormData) {
   const t = TEMPLATES[key];
   if (!t) throw new Error("Unknown template.");
   await db.$transaction([
-    db.simEvent.deleteMany({ where: { economyId: econ.id } }),
+    db.simEvent.deleteMany({ where: { economyId: econ.id, status: "SCHEDULED" } }),
     db.simEvent.createMany({ data: t.config.scheduledEvents.map((e) => ({ economyId: econ.id, cycle: e.cycle, title: e.title, description: e.description, effects: JSON.stringify(e.effects) })) }),
     db.simAuctionLot.deleteMany({ where: { economyId: econ.id } }),
     db.simVenture.deleteMany({ where: { economyId: econ.id } }),
@@ -307,24 +307,60 @@ export async function simReset(fd: FormData) {
   refresh(econ.roundId);
 }
 
-export async function simAddEvent(fd: FormData) {
-  const admin = await requireAdmin();
-  const { econ, cfg } = await econFor(fd);
-  const cycle = Math.round(n(fd, "cycle", Math.max(1, econ.currentCycle)));
-  const minCycle = econ.currentCycle > 0 ? econ.currentCycle : 1;
-  if (econ.status === "FINISHED" || econ.status === "PROCESSING" || cycle < minCycle || cycle > cfg.cycles) throw new Error(`Pick a year from ${minCycle} to ${cfg.cycles}.`);
-  const preset = cfg.eventLibrary.find((e) => e.key === s(fd, "preset"));
-  let effects: EventEffects = preset?.effects ?? {};
-  if (!preset) {
+/** Builds event effects from the form: raw JSON wins; otherwise the preset's effects plus the simple fields. */
+function effectsFromForm(fd: FormData, base: EventEffects): EventEffects {
+  const raw = s(fd, "effects");
+  if (raw) {
     try {
-      effects = JSON.parse(s(fd, "effects") || "{}");
+      return JSON.parse(raw) as EventEffects;
     } catch {
       throw new Error('Effects must be valid JSON, e.g. {"demand": {"fleet": 1.2}, "taxDelta": 3}');
     }
   }
+  const e: EventEffects = { ...base, demand: { ...base.demand }, cost: { ...base.cost }, spot: { ...base.spot } };
+  const pctField = (name: string) => {
+    const v = s(fd, name);
+    return v === "" ? null : Number(v);
+  };
+  const demandPct = pctField("demandPct");
+  if (demandPct !== null && Number.isFinite(demandPct) && demandPct !== 0) e.demand![s(fd, "demandRole") || "*"] = Math.max(0.1, 1 + demandPct / 100);
+  const costPct = pctField("costPct");
+  if (costPct !== null && Number.isFinite(costPct) && costPct !== 0) e.cost![s(fd, "costRole") || "*"] = Math.max(0.1, 1 + costPct / 100);
+  const confPct = pctField("confidencePct");
+  if (confPct !== null && Number.isFinite(confPct) && confPct !== 0) e.confidence = Math.max(0.1, 1 + confPct / 100);
+  for (const k of ["taxDelta", "interestDelta", "inflationDelta", "gdpDelta"] as const) {
+    const v = pctField(k);
+    if (v !== null && Number.isFinite(v) && v !== 0) e[k] = v;
+  }
+  for (const k of ["demand", "cost", "spot"] as const) if (e[k] && !Object.keys(e[k]!).length) delete e[k];
+  return e;
+}
+
+/**
+ * Adds a market event. mode=schedule ties it to a year (announced now if that year is open, otherwise hidden
+ * until then). mode=save puts it in the saved-events library to run later with "Run now".
+ */
+export async function simAddEvent(fd: FormData) {
+  const admin = await requireAdmin();
+  const { econ, cfg } = await econFor(fd);
+  if (econ.status === "PROCESSING") throw new Error("Wait for the current year to finish processing.");
+  const save = s(fd, "mode") === "save";
+  const preset = cfg.eventLibrary.find((e) => e.key === s(fd, "preset"));
+  const effects = effectsFromForm(fd, preset?.effects ?? {});
   const title = s(fd, "title") || preset?.title;
   if (!title) throw new Error("Give the event a headline or pick a preset.");
   const description = s(fd, "description") || preset?.description || "";
+
+  if (save) {
+    await db.simEvent.create({ data: { economyId: econ.id, cycle: 0, status: "SAVED", title, description, effects: JSON.stringify(effects) } });
+    await audit(admin.id, "sim.event_save", title);
+    refresh(econ.roundId);
+    return;
+  }
+
+  const cycle = Math.round(n(fd, "cycle", Math.max(1, econ.currentCycle)));
+  const minCycle = econ.currentCycle > 0 ? econ.currentCycle : 1;
+  if (econ.status === "FINISHED" || cycle < minCycle || cycle > cfg.cycles) throw new Error(`Pick a year from ${minCycle} to ${cfg.cycles}.`);
   await db.simEvent.create({ data: { economyId: econ.id, cycle, title, description, effects: JSON.stringify(effects) } });
   if ((econ.status === "OPEN" || econ.status === "PAUSED") && cycle === econ.currentCycle)
     await db.simMessage.create({ data: { economyId: econ.id, kind: "SYSTEM", body: `Breaking: ${title}. ${description}` } });
@@ -332,10 +368,27 @@ export async function simAddEvent(fd: FormData) {
   refresh(econ.roundId);
 }
 
+/** Runs a saved event in the year being decided: teams see it at once; it takes effect when the year is processed. The saved copy stays for reuse. */
+export async function simRunSavedEvent(fd: FormData) {
+  const admin = await requireAdmin();
+  const ev = await db.simEvent.findUniqueOrThrow({ where: { id: s(fd, "eventId") }, include: { economy: true } });
+  const econ = ev.economy;
+  if (ev.status !== "SAVED") throw new Error("Only saved events can be run.");
+  if (econ.status !== "OPEN" && econ.status !== "PAUSED") throw new Error("Saved events can be run while a year is open for decisions.");
+  await db.$transaction([
+    db.simEvent.create({ data: { economyId: econ.id, cycle: econ.currentCycle, title: ev.title, description: ev.description, effects: ev.effects } }),
+    db.simEvent.update({ where: { id: ev.id }, data: { firedCycle: econ.currentCycle } }),
+    db.simMessage.create({ data: { economyId: econ.id, kind: "SYSTEM", body: `Breaking: ${ev.title}. ${ev.description}` } }),
+  ]);
+  await audit(admin.id, "sim.event_run", `${ev.title} @y${econ.currentCycle}`);
+  refresh(econ.roundId);
+}
+
 export async function simDeleteEvent(fd: FormData) {
   const admin = await requireAdmin();
   const ev = await db.simEvent.findUniqueOrThrow({ where: { id: s(fd, "eventId") }, include: { economy: true } });
-  if (ev.economy.status === "FINISHED" || ev.economy.status === "PROCESSING" || (ev.economy.currentCycle > 0 && ev.cycle < ev.economy.currentCycle)) throw new Error("That event has already been applied.");
+  if (ev.status !== "SAVED" && (ev.economy.status === "FINISHED" || ev.economy.status === "PROCESSING" || (ev.economy.currentCycle > 0 && ev.cycle < ev.economy.currentCycle)))
+    throw new Error("That event has already been applied.");
   await db.simEvent.delete({ where: { id: ev.id } });
   await audit(admin.id, "sim.event_delete", ev.title);
   refresh(ev.economy.roundId);

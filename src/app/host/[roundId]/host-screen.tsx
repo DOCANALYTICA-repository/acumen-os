@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Lock, Maximize2, Users } from "lucide-react";
 import { fmtNumber, GUESS_TIERS, type HostState, type LiveResult } from "@/lib/live-quiz-types";
 import { postLive, useLivePoll } from "@/components/live-quiz-ui";
+import { askConfirm } from "@/components/confirm";
 import { cls } from "@/components/ui";
 
 /** Projector view for the guesstimate round. The host moves everyone between questions, forwards or back. */
@@ -18,7 +19,8 @@ export function HostScreen({ roundId, roundName, roundOrder, initial }: { roundI
 
   const run = useCallback(
     async (command: string, index: number, confirmText?: string) => {
-      if (busy || (confirmText && !window.confirm(confirmText))) return;
+      if (busy) return;
+      if (confirmText && !(await askConfirm(confirmText, { danger: command === "reset" }))) return;
       setBusy(true);
       setMsg(null);
       try {

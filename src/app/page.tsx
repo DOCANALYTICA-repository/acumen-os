@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { getContent, registrationOpen } from "@/lib/content";
 import { effectiveStatus, TEAM_SIZE } from "@/lib/rounds";
-import { fileUrl } from "@/lib/files";
 import { fmtDate } from "@/components/ui";
 import { Countdown } from "@/components/countdown";
 import { AmbientBlobs, Reveal, Stagger, StaggerItem } from "@/components/motion";
@@ -173,7 +172,7 @@ export default async function Home() {
               <Stagger className="mt-8 grid gap-3 sm:grid-cols-2">
                 {assets.map((a) => (
                   <StaggerItem key={a.id} lift>
-                    <a href={fileUrl(a.filePath)} className="glass group flex items-center gap-3 rounded-2xl p-4">
+                    <a href={a.url} target="_blank" rel="noreferrer" className="glass group flex items-center gap-3 rounded-2xl p-4">
                       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-600 transition-transform duration-300 group-hover:-translate-y-0.5"><Download className="h-4 w-4" /></span>
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-ink">{a.title}</span>

@@ -229,7 +229,7 @@ export async function processOpenCycle(economyId: string, opts: { onlyIfExpired?
       db.simVenture.findMany({ where: { economyId } }),
       db.simDecision.findMany({ where: { economyId, cycle } }),
       db.simContract.findMany({ where: { economyId, status: "ACTIVE" } }),
-      db.simEvent.findMany({ where: { economyId, cycle } }),
+      db.simEvent.findMany({ where: { economyId, cycle, status: "SCHEDULED" } }),
     ]);
     const running = activeIn(contracts, cycle);
     const engineVentures = ventures.flatMap((v) => {

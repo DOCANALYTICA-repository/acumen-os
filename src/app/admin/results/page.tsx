@@ -6,10 +6,7 @@ import { SubmitButton } from "@/components/submit-button";
 
 export default async function AdminResults() {
   const { rounds, rows } = await computeLeaderboard();
-  const [quals, flagged] = await Promise.all([
-    db.qualification.findMany(),
-    db.attempt.findMany({ where: { tabSwitches: { gte: 3 } }, include: { team: true, round: true } }),
-  ]);
+  const quals = await db.qualification.findMany();
   const totalWeight = rounds.reduce((s, r) => s + r.weight, 0);
 
   return (
@@ -78,15 +75,6 @@ export default async function AdminResults() {
         </div>
         <p className="mt-3 text-xs text-muted">Scores are percentages of each round&apos;s max. ● = qualified for that round. Disqualified teams are excluded.</p>
       </Card>
-
-      {flagged.length > 0 && (
-        <Card title="Integrity flags" className="mt-6">
-          <table className="w-full">
-            <thead><tr><th className={cls.th}>Team</th><th className={cls.th}>Round</th><th className={cls.th}>Tab switches</th></tr></thead>
-            <tbody>{flagged.map((a) => <tr key={a.id} className="border-t border-line"><td className={cls.td}>{a.team.name}</td><td className={cls.td}>{a.round.name}</td><td className={cls.td}><Badge tone="red">{a.tabSwitches}</Badge></td></tr>)}</tbody>
-          </table>
-        </Card>
-      )}
     </>
   );
 }

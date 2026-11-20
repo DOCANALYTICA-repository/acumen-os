@@ -6,7 +6,17 @@ import bcrypt from "bcryptjs";
 import { db } from "./db";
 
 const COOKIE = "acumen_session";
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET ?? "dev-secret");
+let cachedSecret: Uint8Array | null = null;
+
+/** Signing key for sessions. In production a real AUTH_SECRET (32+ characters) is required. */
+function getSecret() {
+  if (cachedSecret) return cachedSecret;
+  const value = process.env.AUTH_SECRET ?? "";
+  if (process.env.NODE_ENV === "production" && (value.length < 32 || value === "dev-secret"))
+    throw new Error("AUTH_SECRET must be set to a random string of at least 32 characters in production.");
+  cachedSecret = new TextEncoder().encode(value || "dev-secret");
+  return cachedSecret;
+}
 
 export type Role = "PARTICIPANT" | "JUDGE" | "ADMIN";
 
@@ -23,7 +33,7 @@ export async function createSession(userId: string, role: string) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(secret);
+    .sign(getSecret());
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -44,7 +54,7 @@ export async function getSessionUserId(): Promise<string | null> {
   const token = jar.get(COOKIE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, getSecret());
     return typeof payload.uid === "string" ? payload.uid : null;
   } catch {
     return null;

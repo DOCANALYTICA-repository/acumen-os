@@ -25,7 +25,7 @@ export async function SimView({ roundId, teamId, resultsPublished }: { roundId: 
   const [snapshots, decision, events, contracts, messages, attempt, lots] = await Promise.all([
     db.simSnapshot.findMany({ where: { economyId: econ.id }, orderBy: { cycle: "asc" } }),
     econ.currentCycle > 0 ? db.simDecision.findUnique({ where: { ventureId_cycle: { ventureId: me.id, cycle: econ.currentCycle } } }) : null,
-    db.simEvent.findMany({ where: { economyId: econ.id, cycle: { lte: visibleCycle } }, orderBy: [{ cycle: "asc" }, { createdAt: "asc" }] }),
+    db.simEvent.findMany({ where: { economyId: econ.id, status: "SCHEDULED", cycle: { lte: visibleCycle } }, orderBy: [{ cycle: "asc" }, { createdAt: "asc" }] }),
     db.simContract.findMany({ where: { economyId: econ.id }, orderBy: { createdAt: "desc" } }),
     db.simMessage.findMany({ where: { economyId: econ.id, OR: [{ toId: null }, { toId: me.id }, { fromId: me.id }] }, orderBy: { createdAt: "asc" }, take: 400 }),
     resultsPublished ? db.attempt.findUnique({ where: { roundId_teamId: { roundId, teamId } } }) : null,

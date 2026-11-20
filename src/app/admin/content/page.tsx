@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { getContent } from "@/lib/content";
-import { fileUrl } from "@/lib/files";
-import { addAnnouncement, createStaff, deleteAsset, deleteStaff, saveSiteContent, toggleAnnouncement, uploadAsset } from "@/app/actions/admin";
+import { addAnnouncement, createStaff, deleteAsset, deleteStaff, saveSiteContent, toggleAnnouncement, addAsset } from "@/app/actions/admin";
 import { Badge, Card, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -31,9 +30,11 @@ export default async function AdminContent() {
             <Field label="Contact email"><input name="contactEmail" defaultValue={c.contactEmail} className={cls.input} /></Field>
             <Field label="Contact phone"><input name="contactPhone" defaultValue={c.contactPhone} className={cls.input} /></Field>
             <Field label="Instagram URL"><input name="instagram" defaultValue={c.instagram} className={cls.input} /></Field>
-            <Field label="WhatsApp / Discord link"><input name="community" defaultValue={c.community} className={cls.input} /></Field>
+            <Field label="WhatsApp group link" hint="Shown on the registration success page so every member joins"><input name="community" defaultValue={c.community} className={cls.input} /></Field>
+            <Field label="Payment portal link" hint="The “Open payment portal” button in the registration payment step"><input name="paymentLink" type="url" defaultValue={c.paymentLink} className={cls.input} /></Field>
           </div>
-          <Field label="Payment instructions" hint="UPI ID, bank details, what to put in the note"><textarea name="paymentInstructions" rows={3} defaultValue={c.paymentInstructions} className={cls.input} /></Field>
+          <Field label="Payment instructions" hint="Short note above the payment guide (fee, what the receipt must show)"><textarea name="paymentInstructions" rows={2} defaultValue={c.paymentInstructions} className={cls.input} /></Field>
+          <Field label="Guide for payment" hint="One step per line, shown in the “Guide for payment” dialog during registration"><textarea name="paymentSteps" rows={8} defaultValue={c.paymentSteps.join("\n")} className={cls.input} /></Field>
           <Field label="Hero text"><textarea name="heroBlurb" rows={2} defaultValue={c.heroBlurb} className={cls.input} /></Field>
           <Field label="About"><textarea name="about" rows={4} defaultValue={c.about} className={cls.input} /></Field>
           <Field label="Prizes"><textarea name="prizes" rows={2} defaultValue={c.prizes} className={cls.input} /></Field>
@@ -79,21 +80,21 @@ export default async function AdminContent() {
       </div>
 
       <Card title="Assets & downloads">
-        <form action={uploadAsset} className="mb-4 grid gap-2 md:grid-cols-[1fr_160px_180px_1fr_auto]">
+        <form action={addAsset} className="mb-4 grid gap-2 md:grid-cols-[1fr_160px_180px_1fr_auto]">
           <input name="title" placeholder="Title (e.g. Rulebook)" className={cls.input} />
           <input name="category" placeholder="Category" className={cls.input} />
           <select name="visibility" className={cls.input}><option value="PUBLIC">Public</option><option value="PARTICIPANTS">Participants only</option></select>
-          <input type="file" name="file" required className={cls.input} />
-          <SubmitButton>Upload</SubmitButton>
+          <input name="url" type="url" required placeholder="https://drive.google.com/…" className={cls.input} />
+          <SubmitButton>Add link</SubmitButton>
         </form>
         <ul className="divide-y divide-line">
           {assets.map((a) => (
             <li key={a.id} className="flex items-center justify-between py-2 text-sm">
-              <span><a href={fileUrl(a.filePath)} className={cls.ghost}>{a.title}</a> <span className="text-xs text-muted">{a.category}</span> <Badge>{a.visibility === "PUBLIC" ? "public" : "participants"}</Badge></span>
+              <span><a href={a.url} target="_blank" rel="noreferrer" className={cls.ghost}>{a.title}</a> <span className="text-xs text-muted">{a.category}</span> <Badge>{a.visibility === "PUBLIC" ? "public" : "participants"}</Badge></span>
               <form action={deleteAsset}><input type="hidden" name="id" value={a.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm={`Delete ${a.title}?`}>Delete</SubmitButton></form>
             </li>
           ))}
-          {assets.length === 0 && <li className="py-2 text-sm text-muted">No assets uploaded.</li>}
+          {assets.length === 0 && <li className="py-2 text-sm text-muted">No resources yet. Add Google Drive or Docs links; set sharing to “Anyone with the link”. “Participants only” hides the link from the public home page.</li>}
         </ul>
       </Card>
     </>

@@ -21,7 +21,6 @@ export default async function AdminHome() {
 
   const txns = teams.map((t) => t.transactionId).filter(Boolean);
   const dupTxns = txns.filter((t, i) => txns.indexOf(t) !== i).length;
-  const flagged = await db.attempt.count({ where: { tabSwitches: { gte: 3 } } });
 
   return (
     <>
@@ -33,11 +32,10 @@ export default async function AdminHome() {
         <Stat label="Pending judging" value={pendingJudging} hint="assignments without scores" />
       </div>
 
-      {(dupTxns > 0 || flagged > 0) && (
+      {dupTxns > 0 && (
         <Card title="Alerts" className="mt-6">
           <ul className="space-y-1 text-sm">
             {dupTxns > 0 && <li>⚠️ {dupTxns} duplicate transaction ID(s). <Link href="/admin/teams?filter=dup" className={cls.ghost}>Review</Link></li>}
-            {flagged > 0 && <li>⚠️ {flagged} attempt(s) with 3+ tab switches. <Link href="/admin/results" className={cls.ghost}>Review</Link></li>}
           </ul>
         </Card>
       )}

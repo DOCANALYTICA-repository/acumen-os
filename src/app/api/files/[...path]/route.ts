@@ -1,8 +1,6 @@
-import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { resolveStoragePath } from "@/lib/files";
+import { readStoredFile } from "@/lib/files";
 
 const MIME: Record<string, string> = {
   pdf: "application/pdf",
@@ -22,26 +20,13 @@ const MIME: Record<string, string> = {
 };
 const INLINE = new Set(["pdf", "png", "jpg", "jpeg", "webp", "mp4"]);
 
+/** Only payment proofs are stored on the site: readable by organisers and the team's own members. */
 async function canRead(rel: string) {
   const user = await getCurrentUser();
-  if (rel.startsWith("assets/")) {
-    const asset = await db.asset.findFirst({ where: { filePath: rel } });
-    if (!asset) return false;
-    return asset.visibility === "PUBLIC" || !!user;
-  }
   if (!user) return false;
-  if (user.role === "ADMIN") return true;
-  if (rel.startsWith("rounds/")) return true; // round briefs and templates: any logged-in user
-  const teamMatch = rel.match(/^teams\/([^/]+)\//);
-  if (teamMatch) {
-    if (user.membership?.teamId === teamMatch[1]) return true;
-    if (user.role === "JUDGE") {
-      // judges see only submissions of teams assigned to them, never payment proofs
-      if (rel.includes("/payment/")) return false;
-      return !!(await db.judgeAssignment.findFirst({ where: { judgeId: user.id, teamId: teamMatch[1] } }));
-    }
-  }
-  return false;
+  const m = rel.match(/^teams\/([^/]+)\/payment\//);
+  if (!m) return false;
+  return user.role === "ADMIN" || user.membership?.teamId === m[1];
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ path: string[] }> }) {
@@ -50,7 +35,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ path: s
   if (!(await canRead(rel))) return new NextResponse("Not found", { status: 404 });
   let data: Buffer;
   try {
-    data = await readFile(resolveStoragePath(rel));
+    data = await readStoredFile(rel);
   } catch {
     return new NextResponse("Not found", { status: 404 });
   }

@@ -3,7 +3,6 @@ import { db, parseJson } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { teamStatus, TEAM_STATUS_LABEL } from "@/lib/rounds";
 import { computeLeaderboard } from "@/lib/scoring";
-import type { StoredFile } from "@/lib/files";
 
 function csv(rows: (string | number | null | undefined)[][]) {
   // prefix formula-like cells so spreadsheets don't execute them
@@ -38,8 +37,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
   } else if (kind === "submissions") {
     const roundId = new URL(req.url).searchParams.get("round") ?? undefined;
     const subs = await db.submission.findMany({ where: { roundId }, include: { team: true, round: true, uploadedBy: true }, orderBy: [{ roundId: "asc" }, { teamId: "asc" }, { version: "desc" }] });
-    rows.push(["round", "team", "version", "title", "uploaded_by", "submitted_at", "late", "files"]);
-    for (const s of subs) rows.push([s.round.name, s.team.name, s.version, s.title, s.uploadedBy.fullName, s.submittedAt.toISOString(), s.isLate ? "yes" : "", parseJson<StoredFile[]>(s.files, []).map((f) => f.name).join("; ")]);
+    rows.push(["round", "team", "version", "title", "uploaded_by", "submitted_at", "late", "links"]);
+    for (const s of subs) rows.push([s.round.name, s.team.name, s.version, s.title, s.uploadedBy.fullName, s.submittedAt.toISOString(), s.isLate ? "yes" : "", parseJson<string[]>(s.links, []).join(" ")]);
   } else return new NextResponse("Unknown export", { status: 404 });
 
   return new NextResponse(csv(rows), {

@@ -414,7 +414,7 @@ function Decisions({ data }: { data: WorkspaceData }) {
         <Card title="Price and production">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block"><span className={cls.label}>Price per unit (₹)</span>
-              <input name="price" type="number" min={1} value={d.price} onChange={set("price")} disabled={!editable} className={cls.input} />
+              <input name="price" type="number" min={1} step="any" value={d.price} onChange={set("price")} disabled={!editable} className={cls.input} />
               <span className="text-xs text-muted">Market price now ≈ {money(role.basePrice * pl, false)} per {role.product}</span></label>
             <label className="block"><span className={cls.label}>Production (units)</span>
               <input name="production" type="number" min={0} max={s.capacity} value={d.production} onChange={set("production")} disabled={!editable} className={cls.input} />
@@ -427,10 +427,10 @@ function Decisions({ data }: { data: WorkspaceData }) {
         <Card title="Bank">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block"><span className={cls.label}>Borrow (₹)</span>
-              <input name="borrow" type="number" min={0} value={d.borrow} onChange={set("borrow")} disabled={!editable} className={cls.input} />
+              <input name="borrow" type="number" min={0} step="any" value={d.borrow} onChange={set("borrow")} disabled={!editable} className={cls.input} />
               <span className="text-xs text-muted">Limit {money(cfg.creditLimit - s.debt)} · {economy.interestRate}% a year</span></label>
             <label className="block"><span className={cls.label}>Repay (₹)</span>
-              <input name="repay" type="number" min={0} max={s.debt} value={d.repay} onChange={set("repay")} disabled={!editable} className={cls.input} />
+              <input name="repay" type="number" min={0} max={s.debt} step="any" value={d.repay} onChange={set("repay")} disabled={!editable} className={cls.input} />
               <span className="text-xs text-muted">Debt {money(s.debt)}</span></label>
           </div>
           <p className="mt-3 text-sm text-ink/80">Planned spending this year: <strong>{money(spend)}</strong> (levers + new capacity) against {money(s.cash)} cash. If cash runs out, an emergency loan is drawn with a {cfg.emergencyFeePct}% fee.</p>
@@ -442,7 +442,7 @@ function Decisions({ data }: { data: WorkspaceData }) {
           {LEVERS.map((l) => (
             <label key={l.key} className="block rounded-xl bg-white/70 p-3">
               <span className={cls.label}>{l.label} (₹)</span>
-              <input name={l.key} type="number" min={0} step={1000} value={d[l.key]} onChange={set(l.key)} disabled={!editable} className={cls.input} />
+              <input name={l.key} type="number" min={0} step="any" value={d[l.key]} onChange={set(l.key)} disabled={!editable} className={cls.input} />
               <span className="mt-1 block text-xs text-muted">{l.hint}</span>
             </label>
           ))}

@@ -1,6 +1,6 @@
 import { db, parseJson } from "@/lib/db";
-import { excelKey, teamStatus } from "@/lib/rounds";
-import { computeLeaderboard, excelItemCorrect, isQuizAnswerCorrect, type QuizAnswer } from "@/lib/scoring";
+import { teamStatus } from "@/lib/rounds";
+import { computeLeaderboard, isQuizAnswerCorrect, type QuizAnswer } from "@/lib/scoring";
 import { Card, PageHeader, Stat, cls, DownloadLink } from "@/components/ui";
 import { Bars, Funnel, GroupedBars, Trend } from "./charts";
 
@@ -84,14 +84,6 @@ export default async function Analytics() {
       }))
     : [];
 
-  const excel = rounds.find((r) => r.type === "EXCEL");
-  const excelAttempts = attempts.filter((a) => a.roundId === excel?.id && a.submittedAt && Object.keys(parseJson<object>(a.answers, {})).length > 0);
-  const cellAccuracy = excel && excelAttempts.length
-    ? excelKey(excel).map((k) => ({
-        cell: k.cell.replace(/^.*!/, ""),
-        correct: Math.round((excelAttempts.filter((a) => excelItemCorrect(k, parseJson<Record<string, string>>(a.answers, {})[k.cell])).length / excelAttempts.length) * 100),
-      }))
-    : [];
 
   const judged = assignments.filter((a) => scores.some((s) => s.roundId === a.roundId && s.teamId === a.teamId && s.judgeId === a.judgeId)).length;
 
@@ -133,7 +125,6 @@ export default async function Analytics() {
           </Card>
         ))}
         {questionAccuracy.length > 0 && <Card title={`Quiz: % of teams correct per question (${answered.length} teams)`}><Bars data={questionAccuracy} x="q" y="correct" label="% correct" /></Card>}
-        {cellAccuracy.length > 0 && <Card title={`Excel: % of teams correct per answer cell (${excelAttempts.length} teams)`}><Bars data={cellAccuracy} x="cell" y="correct" label="% correct" /></Card>}
       </div>
 
       <Card title="Top 10 overall">

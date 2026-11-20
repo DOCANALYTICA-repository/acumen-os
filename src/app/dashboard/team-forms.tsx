@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import { checkTeamName, createTeam, joinTeam, renameTeam, uploadPayment } from "@/app/actions/team";
+import { checkTeamName, renameTeam, reuploadReceipt } from "@/app/actions/team";
 import type { FormState } from "@/app/actions/auth";
 import { Alert, Field, cls } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
@@ -29,30 +29,6 @@ function TeamNameInput({ defaultValue = "" }: { defaultValue?: string }) {
   );
 }
 
-export function CreateTeamForm() {
-  const [state, action] = useActionState<FormState, FormData>(createTeam, undefined);
-  return (
-    <form action={action} className="space-y-4">
-      <Result state={state} />
-      <TeamNameInput />
-      <SubmitButton pendingText="Creating…">Create team</SubmitButton>
-    </form>
-  );
-}
-
-export function JoinTeamForm({ code = "" }: { code?: string }) {
-  const [state, action] = useActionState<FormState, FormData>(joinTeam, undefined);
-  return (
-    <form action={action} className="space-y-4">
-      <Result state={state} />
-      <Field label="Invite code" hint="6 characters, from your team lead">
-        <input name="code" required defaultValue={code} maxLength={6} className={`${cls.input} font-mono uppercase tracking-widest`} />
-      </Field>
-      <SubmitButton pendingText="Joining…">Join team</SubmitButton>
-    </form>
-  );
-}
-
 export function RenameTeamForm({ current }: { current: string }) {
   const [state, action] = useActionState<FormState, FormData>(renameTeam, undefined);
   return (
@@ -64,35 +40,19 @@ export function RenameTeamForm({ current }: { current: string }) {
   );
 }
 
-export function PaymentForm() {
-  const [state, action] = useActionState<FormState, FormData>(uploadPayment, undefined);
+/** Shown only after an organiser rejects the receipt. */
+export function ReceiptForm() {
+  const [state, action] = useActionState<FormState, FormData>(reuploadReceipt, undefined);
   return (
     <form action={action} className="space-y-4">
       <Result state={state} />
-      <Field label="Payment screenshot" hint="JPG, PNG, WEBP or PDF, up to 5 MB">
-        <input name="screenshot" type="file" required accept="image/png,image/jpeg,image/webp,application/pdf" className={cls.input} />
+      <Field label="New payment receipt" hint="JPG, PNG, WEBP or PDF, up to 4 MB">
+        <input name="receipt" type="file" required accept="image/png,image/jpeg,image/webp,application/pdf" className={cls.input} />
       </Field>
-      <Field label="Transaction / UTR ID">
-        <input name="transactionId" required className={cls.input} maxLength={64} />
+      <Field label="Transaction / reference ID (optional)">
+        <input name="transactionId" className={cls.input} maxLength={64} />
       </Field>
-      <SubmitButton pendingText="Uploading…">Submit payment proof</SubmitButton>
+      <SubmitButton pendingText="Uploading…">Send new receipt</SubmitButton>
     </form>
-  );
-}
-
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`${cls.btn} ${cls.secondary} px-3 py-1.5`}
-      onClick={async () => {
-        await navigator.clipboard.writeText(text);
-        setDone(true);
-        setTimeout(() => setDone(false), 1500);
-      }}
-    >
-      {done ? "Copied" : label}
-    </button>
   );
 }

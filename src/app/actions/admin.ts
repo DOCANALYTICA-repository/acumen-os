@@ -1,14 +1,14 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { unlink } from "fs/promises";
 import { db, audit } from "@/lib/db";
 import { hashPassword, requireAdmin } from "@/lib/auth";
 import { getContent, saveContent, type SiteContent } from "@/lib/content";
-import { ALL_FILE_TYPES, manualSettings, type ExcelKeyItem, type ManualSettings, type SubmissionSettings } from "@/lib/rounds";
+import { isHttpsUrl, manualSettings, TEAM_SIZE, type ManualSettings, type SubmissionSettings } from "@/lib/rounds";
 import { computeLeaderboard, rankByRound } from "@/lib/scoring";
 import { MAX_GUESS_POINTS, parseGuess } from "@/lib/live-quiz-types";
-import { resolveStoragePath, saveUpload } from "@/lib/files";
+import { memberSchema } from "@/lib/registration";
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const n = (fd: FormData, k: string, fallback = 0) => {
@@ -38,48 +38,31 @@ export async function updateRound(fd: FormData) {
     instructions: s(fd, "instructions"),
     startsAt: date(fd, "startsAt"),
     endsAt: date(fd, "endsAt"),
-    durationMinutes: s(fd, "durationMinutes") ? n(fd, "durationMinutes") : null,
+    briefUrl: s(fd, "briefUrl") || null,
     weight: n(fd, "weight", round.weight),
     status: s(fd, "status") || round.status,
     restrictToQualified: fd.get("restrictToQualified") === "on",
   };
   if (round.type === "SUBMISSION") {
     const settings: SubmissionSettings = {
-      allowedTypes: fd.getAll("allowedTypes").map(String).filter((t) => ALL_FILE_TYPES.includes(t)),
-      maxSizeMB: Math.min(500, Math.max(1, n(fd, "maxSizeMB", 25))),
-      maxFiles: Math.min(10, Math.max(1, n(fd, "maxFiles", 1))),
       allowResubmit: fd.get("allowResubmit") === "on",
       allowLate: fd.get("allowLate") === "on",
       latePenaltyPct: Math.max(0, n(fd, "latePenaltyPct")),
-      allowLinks: fd.get("allowLinks") === "on",
       anonymousJudging: fd.get("anonymousJudging") === "on",
     };
-    if (!settings.allowedTypes.length) settings.allowedTypes = ["pdf"];
     data.settings = JSON.stringify(settings);
   }
   if (round.type === "MANUAL") {
     const link = s(fd, "link");
-    if (link && !/^https:\/\/\S+$/.test(link)) throw new Error("The link must start with https://");
+    if (link && !isHttpsUrl(link)) throw new Error("The link must start with https://");
     const settings: ManualSettings = { maxMarks: Math.max(1, n(fd, "maxMarks", 100)), link, linkLabel: s(fd, "linkLabel") || "Open assignment" };
     data.settings = JSON.stringify(settings);
   }
+  if (data.briefUrl && !isHttpsUrl(String(data.briefUrl))) throw new Error("The brief link must start with https://");
   if (data.startsAt && data.endsAt && data.endsAt <= data.startsAt) throw new Error("End time must be after start time.");
   await db.round.update({ where: { id }, data });
   await audit(admin.id, "round.update", round.name);
   refresh("/admin/rounds", `/admin/rounds/${id}`);
-}
-
-export async function uploadRoundFile(fd: FormData) {
-  const admin = await requireAdmin();
-  const id = s(fd, "id");
-  const kind = s(fd, "kind"); // brief | template
-  const file = fd.get("file");
-  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a file.");
-  if (kind === "template" && !file.name.toLowerCase().endsWith(".xlsx")) throw new Error("The Excel template must be an .xlsx file.");
-  const saved = await saveUpload(file, `rounds/${id}`);
-  await db.round.update({ where: { id }, data: kind === "template" ? { excelTemplate: saved.path } : { briefFile: saved.path } });
-  await audit(admin.id, `round.upload_${kind}`, id);
-  refresh(`/admin/rounds/${id}`);
 }
 
 /** Guesstimate question: text plus one numeric correct answer (and an optional note shown with the answer). */
@@ -137,24 +120,6 @@ export async function deleteQuestion(fd: FormData) {
   await requireAdmin();
   const q = await db.question.delete({ where: { id: s(fd, "id") } });
   refresh(`/admin/rounds/${q.roundId}`);
-}
-
-export async function saveExcelKey(fd: FormData) {
-  const admin = await requireAdmin();
-  const roundId = s(fd, "roundId");
-  const cells = fd.getAll("cell").map(String);
-  const key: ExcelKeyItem[] = cells
-    .map((cell, i) => ({
-      cell: cell.trim(),
-      label: String(fd.getAll("label")[i] ?? "").trim(),
-      value: String(fd.getAll("value")[i] ?? "").trim(),
-      tolerance: Number(fd.getAll("tolerance")[i]) || 0,
-      marks: Number(fd.getAll("marks")[i]) || 0,
-    }))
-    .filter((k) => k.cell && k.value);
-  await db.round.update({ where: { id: roundId }, data: { excelAnswerKey: JSON.stringify(key) } });
-  await audit(admin.id, "round.excel_key", `${roundId}:${key.length} cells`);
-  refresh(`/admin/rounds/${roundId}`);
 }
 
 export async function saveRubric(fd: FormData) {
@@ -281,16 +246,56 @@ export async function saveTeamNote(fd: FormData) {
   refresh("/admin/teams");
 }
 
+/** Validated member fields from an admin form, or throws with a readable message. */
+function memberFromForm(fd: FormData) {
+  const parsed = memberSchema.safeParse({ fullName: s(fd, "fullName"), email: s(fd, "email"), phone: s(fd, "phone"), college: s(fd, "college"), year: s(fd, "year") });
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  return parsed.data;
+}
+
+async function assertEmailFree(email: string, exceptUserId?: string) {
+  const other = await db.user.findUnique({ where: { email } });
+  if (other && other.id !== exceptUserId) throw new Error(`${email} is already used by another account.`);
+}
+
+/** Edit a member in place (also how organisers replace a teammate). Captains can also be given a new password. */
+export async function adminUpdateMember(fd: FormData) {
+  const admin = await requireAdmin();
+  const m = await db.teamMember.findUniqueOrThrow({ where: { id: s(fd, "memberId") }, include: { team: true } });
+  const data = memberFromForm(fd);
+  await assertEmailFree(data.email, m.userId);
+  const password = s(fd, "newPassword");
+  if (password && !m.isLead) throw new Error("Only the captain logs in, so only the captain can have a password.");
+  if (password && password.length < 8) throw new Error("The new password must be at least 8 characters.");
+  await db.user.update({ where: { id: m.userId }, data: { ...data, ...(password ? { passwordHash: await hashPassword(password) } : {}) } });
+  await audit(admin.id, "team.admin_edit_member", `${m.team.name}:${data.email}${password ? " (password reset)" : ""}`);
+  refresh("/admin/teams");
+}
+
+/** Add a teammate to a team that is short (e.g. after a removal). The new member can't log in; the captain does. */
+export async function adminAddMember(fd: FormData) {
+  const admin = await requireAdmin();
+  const team = await db.team.findUniqueOrThrow({ where: { id: s(fd, "teamId") }, include: { members: true } });
+  if (team.members.length >= TEAM_SIZE) throw new Error(`${team.name} already has ${TEAM_SIZE} members.`);
+  const data = memberFromForm(fd);
+  await assertEmailFree(data.email);
+  const user = await db.user.create({ data: { ...data, passwordHash: await hashPassword(randomUUID() + randomUUID()) } });
+  await db.teamMember.create({ data: { teamId: team.id, userId: user.id, isLead: team.members.length === 0 } });
+  await audit(admin.id, "team.admin_add_member", `${team.name}:${data.email}`);
+  refresh("/admin/teams");
+}
+
+/**
+ * Removes a teammate and, when nothing else references it, their account too, so the email can register again.
+ * The captain can't be removed (they are the team's login): edit their details instead.
+ */
 export async function adminRemoveMember(fd: FormData) {
   const admin = await requireAdmin();
-  const m = await db.teamMember.findUniqueOrThrow({ where: { id: s(fd, "memberId") }, include: { team: { include: { members: true } } } });
+  const m = await db.teamMember.findUniqueOrThrow({ where: { id: s(fd, "memberId") }, include: { team: true, user: true } });
+  if (m.isLead) throw new Error("The captain is the team's login and can't be removed. Edit their details instead.");
   await db.teamMember.delete({ where: { id: m.id } });
-  if (m.isLead) {
-    const next = m.team.members.find((x) => x.id !== m.id);
-    if (next) await db.teamMember.update({ where: { id: next.id }, data: { isLead: true } });
-    else await db.team.delete({ where: { id: m.teamId } });
-  }
-  await audit(admin.id, "team.admin_remove_member", `${m.team.name}:${m.userId}`);
+  if (m.user.role === "PARTICIPANT") await db.user.delete({ where: { id: m.userId } }).catch(() => {});
+  await audit(admin.id, "team.admin_remove_member", `${m.team.name}:${m.user.email}`);
   refresh("/admin/teams");
 }
 
@@ -351,6 +356,8 @@ export async function saveSiteContent(fd: FormData) {
     return { name, url: url ?? "" };
   }).filter((x) => x.name);
   const deadline = s(fd, "registrationDeadline");
+  for (const [label, url] of [["Payment portal link", s(fd, "paymentLink")], ["WhatsApp group link", s(fd, "community")]])
+    if (url && !isHttpsUrl(url)) throw new Error(`${label} must start with https://`);
   const next: SiteContent = {
     ...current,
     eventName: s(fd, "eventName") || current.eventName,
@@ -362,6 +369,8 @@ export async function saveSiteContent(fd: FormData) {
     prizes: s(fd, "prizes"),
     fee: s(fd, "fee"),
     paymentInstructions: s(fd, "paymentInstructions"),
+    paymentLink: s(fd, "paymentLink"),
+    paymentSteps: s(fd, "paymentSteps").split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
     contactEmail: s(fd, "contactEmail"),
     contactPhone: s(fd, "contactPhone"),
     instagram: s(fd, "instagram"),
@@ -391,21 +400,20 @@ export async function toggleAnnouncement(fd: FormData) {
   refresh("/admin/content");
 }
 
-export async function uploadAsset(fd: FormData) {
+/** Resources are links (Google Drive, Docs…). PARTICIPANTS ones are listed only to signed-in users. */
+export async function addAsset(fd: FormData) {
   await requireAdmin();
-  const file = fd.get("file");
-  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a file.");
-  const saved = await saveUpload(file, "assets");
+  const url = s(fd, "url");
+  if (!isHttpsUrl(url)) throw new Error("The link must start with https://");
   await db.asset.create({
-    data: { title: s(fd, "title") || file.name, category: s(fd, "category") || "General", filePath: saved.path, visibility: s(fd, "visibility") === "PARTICIPANTS" ? "PARTICIPANTS" : "PUBLIC" },
+    data: { title: s(fd, "title") || url, category: s(fd, "category") || "General", url, visibility: s(fd, "visibility") === "PARTICIPANTS" ? "PARTICIPANTS" : "PUBLIC" },
   });
   refresh("/admin/content");
 }
 
 export async function deleteAsset(fd: FormData) {
   await requireAdmin();
-  const a = await db.asset.delete({ where: { id: s(fd, "id") } });
-  await unlink(resolveStoragePath(a.filePath)).catch(() => {});
+  await db.asset.delete({ where: { id: s(fd, "id") } });
   refresh("/admin/content");
 }
 

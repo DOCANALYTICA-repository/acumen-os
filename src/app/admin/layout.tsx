@@ -19,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <Container className="py-8">
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <aside>
+        <aside className="min-w-0">
           <nav className="flex gap-1 overflow-x-auto lg:sticky lg:top-24 lg:flex-col">
             {items.map(([href, label]) => (
               <Link key={href} href={href} className="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium text-ink/80 hover:bg-white hover:text-ink">

@@ -2,8 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   experimental: {
-    // submissions allow files up to the per-round limit (default 25 MB)
-    serverActions: { bodySizeLimit: "60mb" },
+    // uploads are capped at 4 MB per file; Vercel rejects request bodies over ~4.5 MB
+    serverActions: { bodySizeLimit: "5mb" },
   },
 };
 

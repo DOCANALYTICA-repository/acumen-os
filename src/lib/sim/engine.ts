@@ -174,7 +174,7 @@ export function processCycle(input: CycleInput): CycleOutput {
     const carry = (x: Partial<Decision>): Partial<Decision> => {
       const k = market.cycle > 0 ? 1 + market.inflation / 100 : 1;
       const levers = Object.fromEntries(LEVERS.map((l) => [l.key, Math.round((x[l.key] ?? 0) * k)]));
-      return { ...x, ...levers, price: (x.price ?? 0) * k, capacityInvest: 0, borrow: 0, repay: 0 };
+      return { ...x, ...levers, price: Math.round((x.price ?? 0) * k), capacityInvest: 0, borrow: 0, repay: 0 };
     };
     const d = sanitizeDecision(cfg, role, v.state, carried && v.state.lastDecision ? carry(raw) : carried ? { ...raw, capacityInvest: 0, borrow: 0, repay: 0 } : raw, pl);
     // Unhappy staff means absenteeism and attrition: effective capacity falls below 50 satisfaction.

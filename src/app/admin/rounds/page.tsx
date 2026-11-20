@@ -17,7 +17,7 @@ export default async function AdminRounds() {
           <tbody>
             {rounds.map((r) => {
               const st = effectiveStatus(r);
-              const setup = r.type === "QUIZ" ? `${r._count.questions} questions` : r.type === "EXCEL" ? (r.excelTemplate ? "Workbook uploaded" : "No workbook") : r.type === "SIMULATION" ? "Economy in control room" : r.type === "MANUAL" ? `${r._count.attempts} marked done or scored` : `${r._count.criteria} rubric criteria`;
+              const setup = r.type === "QUIZ" ? `${r._count.questions} questions` : r.type === "SIMULATION" ? "Economy in control room" : r.type === "MANUAL" ? `${r._count.attempts} marked done or scored` : `${r._count.criteria} rubric criteria`;
               return (
                 <tr key={r.id} className="border-t border-line">
                   <td className={cls.td}>{r.order}</td>

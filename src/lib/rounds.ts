@@ -1,8 +1,12 @@
 import type { Round, Team } from "@prisma/client";
 import { parseJson } from "./db";
 
-/** QUIZ = host-led guesstimate round; MANUAL = played off the platform, teams mark it done and organisers enter marks. */
-export type RoundType = "QUIZ" | "EXCEL" | "SUBMISSION" | "SIMULATION" | "MANUAL";
+/**
+ * QUIZ = host-led guesstimate; MANUAL = played off the platform, teams mark it done (optionally with a link) and organisers
+ * enter marks; SUBMISSION = teams submit links that judges mark with a rubric; SIMULATION = the economy simulation.
+ * Nothing is uploaded to the site: documents live on Google Classroom / Drive and are shared as links.
+ */
+export type RoundType = "QUIZ" | "SUBMISSION" | "SIMULATION" | "MANUAL";
 
 export type ManualSettings = {
   maxMarks: number;
@@ -19,37 +23,29 @@ export function manualSettings(round: Pick<Round, "settings">): ManualSettings {
 export type EffectiveStatus = "DRAFT" | "UPCOMING" | "LIVE" | "CLOSED";
 
 export type SubmissionSettings = {
-  allowedTypes: string[]; // file extensions without dot
-  maxSizeMB: number;
-  maxFiles: number;
   allowResubmit: boolean;
   allowLate: boolean;
   latePenaltyPct: number;
-  allowLinks: boolean;
   anonymousJudging: boolean;
 };
 
 export const DEFAULT_SUBMISSION_SETTINGS: SubmissionSettings = {
-  allowedTypes: ["pdf", "pptx"],
-  maxSizeMB: 25,
-  maxFiles: 1,
   allowResubmit: true,
   allowLate: false,
   latePenaltyPct: 0,
-  allowLinks: false,
   anonymousJudging: true,
 };
 
-export const ALL_FILE_TYPES = ["pdf", "ppt", "pptx", "doc", "docx", "xls", "xlsx", "csv", "zip", "mp4", "png", "jpg", "jpeg"];
+/** Up to this many links per submission. */
+export const MAX_SUBMISSION_LINKS = 5;
 
-export type ExcelKeyItem = { cell: string; label: string; value: string; tolerance: number; marks: number };
+/** True for a plain https:// URL (no spaces). Every link teams or organisers paste must pass this. */
+export function isHttpsUrl(v: string) {
+  return /^https:\/\/[^\s]+$/.test(v);
+}
 
 export function submissionSettings(round: Pick<Round, "settings">): SubmissionSettings {
   return { ...DEFAULT_SUBMISSION_SETTINGS, ...parseJson<Partial<SubmissionSettings>>(round.settings, {}) };
-}
-
-export function excelKey(round: Pick<Round, "excelAnswerKey">): ExcelKeyItem[] {
-  return parseJson<ExcelKeyItem[]>(round.excelAnswerKey, []);
 }
 
 export function effectiveStatus(round: Pick<Round, "status" | "startsAt" | "endsAt">, now = new Date()): EffectiveStatus {
@@ -63,7 +59,6 @@ export function effectiveStatus(round: Pick<Round, "status" | "startsAt" | "ends
 
 export const TYPE_LABEL: Record<string, string> = {
   QUIZ: "Guesstimate",
-  EXCEL: "Excel",
   SUBMISSION: "Submission",
   SIMULATION: "Economy simulation",
   MANUAL: "Off-platform",
@@ -98,15 +93,8 @@ export function entryBlocker(opts: {
 }): string | null {
   if (opts.status === "DISQUALIFIED") return "Your team has been disqualified.";
   if (opts.status === "INCOMPLETE") return `Your team needs ${TEAM_SIZE} members before entering rounds.`;
-  if (opts.status !== "PAID") return "Upload your payment proof to unlock rounds.";
+  if (opts.status === "PAYMENT_REJECTED") return "Your payment receipt was rejected. Attach a new one on your dashboard to unlock rounds.";
+  if (opts.status !== "PAID") return "Your team's payment hasn't been received yet. Contact the organisers.";
   if (opts.round.restrictToQualified && !opts.qualified) return "Only teams that qualified from the previous round can enter.";
   return null;
-}
-
-export function timeLeftMs(round: Pick<Round, "endsAt" | "durationMinutes">, startedAt: Date, now = new Date()) {
-  const limits: number[] = [];
-  if (round.durationMinutes) limits.push(startedAt.getTime() + round.durationMinutes * 60_000);
-  if (round.endsAt) limits.push(round.endsAt.getTime());
-  if (!limits.length) return null;
-  return Math.max(0, Math.min(...limits) - now.getTime());
 }

@@ -2,11 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db, parseJson } from "@/lib/db";
 import { dryRun } from "@/lib/sim/engine";
-import { DEAL_KINDS, cycleName, money, num, parseConfig, pct, roleOf, TEMPLATES, type DealKind, type VentureResult } from "@/lib/sim/model";
+import { DEAL_KINDS, cycleName, describeEffects, money, num, parseConfig, pct, roleOf, TEMPLATES, type DealKind, type VentureResult } from "@/lib/sim/model";
 import { auctionWallet, eligibleTeams, finalStandings, marketState, maybeAdvance, ventureState } from "@/lib/sim/service";
 import {
   simAddEvent, simAdjustCash, simAutoAssign, simBroadcast, simCloseLot, simCreate, simDeleteEvent, simExtend, simFinishAuction, simLoadTemplate,
-  simOpenLot, simPause, simPrepareAuction, simProcess, simRescore, simReset, simResume, simSaveBasics, simSaveJson, simSetEconomy, simSetRole, simStart,
+  simOpenLot, simPause, simPrepareAuction, simProcess, simRescore, simReset, simResume, simRunSavedEvent, simSaveBasics, simSaveJson, simSetEconomy, simSetRole, simStart,
 } from "@/app/actions/sim-admin";
 import { Alert, Badge, Card, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
@@ -44,7 +44,7 @@ export default async function SimControl({ params, searchParams }: { params: Pro
   await maybeAdvance(round.economy.id);
   const econ = await db.simEconomy.findUniqueOrThrow({ where: { id: round.economy.id }, include: { ventures: { include: { team: true }, orderBy: { roleKey: "asc" } } } });
   const cfg = parseConfig(econ.config);
-  const [decisions, contracts, events, messages, snapshots, eligible, lots] = await Promise.all([
+  const [decisions, contracts, allEvents, messages, snapshots, eligible, lots] = await Promise.all([
     db.simDecision.findMany({ where: { economyId: econ.id, cycle: econ.currentCycle } }),
     db.simContract.findMany({ where: { economyId: econ.id }, orderBy: { createdAt: "desc" } }),
     db.simEvent.findMany({ where: { economyId: econ.id }, orderBy: [{ cycle: "asc" }, { createdAt: "asc" }] }),
@@ -58,6 +58,9 @@ export default async function SimControl({ params, searchParams }: { params: Pro
   for (const s of snapshots) lastResult.set(s.ventureId, parseJson<VentureResult>(s.data, {} as VentureResult));
   const teamName = (ventureId: string | null) => (ventureId === null ? "Organisers" : econ.ventures.find((v) => v.id === ventureId)?.team.name ?? "?");
   const running = econ.status === "OPEN" || econ.status === "PAUSED";
+  const events = allEvents.filter((e) => e.status !== "SAVED");
+  const savedEvents = allEvents.filter((e) => e.status === "SAVED");
+  const canRunEvents = running;
   const beforeStart = econ.status === "SETUP" || econ.status === "READY";
   const openLot = lots.find((l) => l.status === "OPEN");
   const standings = econ.status === "FINISHED" ? await finalStandings(econ.id) : null;
@@ -290,11 +293,36 @@ export default async function SimControl({ params, searchParams }: { params: Pro
 
       {/* ---------- Events ---------- */}
       <div className="mb-6 grid gap-6 xl:grid-cols-2">
-        <Card title={`Market events (${events.length})`}>
+        <Card title={`Saved events (${savedEvents.length})`}>
+          <p className="mb-3 text-xs text-muted">
+            Prepare events in advance with “Save for later”. During an open year, “Run now” announces one to every team at once; it takes effect when that year is processed. Saved events stay here, so you can run them again.
+          </p>
+          {savedEvents.length === 0 ? <p className="text-sm text-muted">No saved events yet.</p> : (
+            <ul className="space-y-2 text-sm">
+              {savedEvents.map((e) => (
+                <li key={e.id} className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-2">
+                  <div className="min-w-0 flex-1">
+                    <strong>{e.title}</strong> {e.firedCycle ? <Badge tone="green">Ran in year {e.firedCycle}</Badge> : null}
+                    {e.description && <div className="text-xs text-muted">{e.description}</div>}
+                    <div className="text-xs text-ink/80">{describeEffects(cfg, parseJson(e.effects, {}))}</div>
+                  </div>
+                  <div className="flex gap-1">
+                    {canRunEvents && (
+                      <form action={simRunSavedEvent}><input type="hidden" name="eventId" value={e.id} /><SubmitButton className="px-3 py-1 text-xs" pendingText="Running…" confirm={`Run “${e.title}” now? Every team sees it immediately and it applies when year ${econ.currentCycle} is processed.`}>Run now</SubmitButton></form>
+                    )}
+                    <form action={simDeleteEvent}><input type="hidden" name="eventId" value={e.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm="Delete this saved event?">Delete</SubmitButton></form>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!canRunEvents && savedEvents.length > 0 && <p className="mt-3 text-xs text-muted">“Run now” appears while a year is open for decisions.</p>}
+        </Card>
+        <Card title={`Scheduled events (${events.length})`}>
           <ul className="space-y-2 text-sm">
             {events.map((e) => (
               <li key={e.id} className="flex items-start justify-between gap-3 border-b border-line pb-2">
-                <div><Badge tone={econ.currentCycle > e.cycle || econ.status === "FINISHED" ? "gray" : "amber"}>Year {e.cycle}</Badge> <strong>{e.title}</strong><div className="text-xs text-muted">{e.description}</div><code className="text-[11px] text-muted">{e.effects}</code></div>
+                <div className="min-w-0"><Badge tone={econ.currentCycle > e.cycle || econ.status === "FINISHED" ? "gray" : "amber"}>Year {e.cycle}</Badge> <strong>{e.title}</strong><div className="text-xs text-muted">{e.description}</div><div className="text-xs text-ink/80">{describeEffects(cfg, parseJson(e.effects, {}))}</div></div>
                 {econ.status !== "FINISHED" && (econ.currentCycle === 0 || e.cycle >= econ.currentCycle) && (
                   <form action={simDeleteEvent}><input type="hidden" name="eventId" value={e.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm="Delete this event?">Delete</SubmitButton></form>
                 )}
@@ -302,26 +330,45 @@ export default async function SimControl({ params, searchParams }: { params: Pro
             ))}
           </ul>
         </Card>
-        <Card title="Add an event">
-          {econ.status === "FINISHED" ? <p className="text-sm text-muted">The simulation is over.</p> : (
-            <form action={simAddEvent} className="space-y-3">
-              {hidden}
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Year"><input name="cycle" type="number" min={Math.max(1, econ.currentCycle)} max={cfg.cycles} defaultValue={Math.max(1, econ.currentCycle)} className={cls.input} /></Field>
-                <Field label="Preset">
-                  <select name="preset" className={cls.input} defaultValue="">
-                    <option value="">Custom (fill in below)</option>
-                    {cfg.eventLibrary.map((e) => <option key={e.key} value={e.key}>{e.title}</option>)}
-                  </select>
-                </Field>
-              </div>
-              <Field label="Headline (custom)"><input name="title" className={cls.input} /></Field>
-              <Field label="Description (custom)"><textarea name="description" rows={2} className={cls.input} /></Field>
-              <Field label="Effects JSON (custom)" hint='e.g. {"demand": {"*": 0.9}, "taxDelta": 2, "inflationDelta": 1, "gdpDelta": -2, "confidence": 0.9}'><input name="effects" className={cls.input} /></Field>
-              <SubmitButton variant="secondary">Add event</SubmitButton>
-              <p className="text-xs text-muted">Events for the year being decided are announced immediately. Future events stay hidden from teams.</p>
-            </form>
-          )}
+        <Card title="Create an event" className="xl:col-span-2">
+          <form action={simAddEvent} className="space-y-3">
+            {hidden}
+            <div className="grid gap-3 md:grid-cols-3">
+              <Field label="Start from a preset">
+                <select name="preset" className={cls.input} defaultValue="">
+                  <option value="">Custom (fill in below)</option>
+                  {cfg.eventLibrary.map((e) => <option key={e.key} value={e.key}>{e.title}</option>)}
+                </select>
+              </Field>
+              <Field label="Headline" hint="Leave empty to use the preset's"><input name="title" className={cls.input} /></Field>
+              <Field label="Year (only for “Schedule”)"><input name="cycle" type="number" min={Math.max(1, econ.currentCycle)} max={cfg.cycles} defaultValue={Math.max(1, econ.currentCycle)} className={cls.input} /></Field>
+            </div>
+            <Field label="What teams read" hint="Leave empty to use the preset's"><textarea name="description" rows={2} className={cls.input} /></Field>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Demand change %"><input name="demandPct" type="number" step="1" placeholder="e.g. -15" className={cls.input} /></Field>
+              <Field label="…in market">
+                <select name="demandRole" className={cls.input} defaultValue="*"><option value="*">All markets</option>{cfg.roles.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}</select>
+              </Field>
+              <Field label="Unit cost change %"><input name="costPct" type="number" step="1" placeholder="e.g. 10" className={cls.input} /></Field>
+              <Field label="…for">
+                <select name="costRole" className={cls.input} defaultValue="*"><option value="*">Everyone</option>{cfg.roles.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}</select>
+              </Field>
+              <Field label="Tax rate ± pts"><input name="taxDelta" type="number" step="0.5" className={cls.input} /></Field>
+              <Field label="Interest rate ± pts"><input name="interestDelta" type="number" step="0.5" className={cls.input} /></Field>
+              <Field label="Inflation ± pts"><input name="inflationDelta" type="number" step="0.5" className={cls.input} /></Field>
+              <Field label="GDP growth ± pts"><input name="gdpDelta" type="number" step="0.5" className={cls.input} /></Field>
+              <Field label="Consumer confidence %" hint="This year only"><input name="confidencePct" type="number" step="1" placeholder="e.g. -10" className={cls.input} /></Field>
+            </div>
+            <details>
+              <summary className="cursor-pointer text-xs font-medium text-brand">Advanced: effects as JSON (overrides the fields above)</summary>
+              <div className="mt-2"><input name="effects" placeholder='{"demand": {"*": 0.9}, "taxDelta": 2}' className={cls.input} /></div>
+            </details>
+            <p className="text-xs text-muted">Demand, cost and confidence changes last for the year the event runs in; tax, interest, inflation and GDP changes persist for the rest of the game.</p>
+            <div className="flex flex-wrap gap-2">
+              <SubmitButton name="mode" value="save" pendingText="Saving…">Save for later</SubmitButton>
+              {econ.status !== "FINISHED" && <SubmitButton name="mode" value="schedule" variant="secondary" pendingText="Scheduling…">Schedule for the year above</SubmitButton>}
+            </div>
+          </form>
         </Card>
       </div>
 

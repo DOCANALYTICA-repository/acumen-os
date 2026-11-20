@@ -468,3 +468,23 @@ export const AWARDS: { key: keyof FinalMetrics; title: string; label: (m: FinalM
   { key: "dealValue", title: "Top deal-maker", label: (m) => `${money(m.dealValue)} of deals signed` },
   { key: "cumTax", title: "Biggest taxpayer", label: (m) => `${money(m.cumTax)} paid in tax` },
 ];
+
+/** Plain-English summary of an event's effects, e.g. "Demand: battery +15% · Tax +5 pts". */
+export function describeEffects(cfg: Pick<EconomyConfig, "roles">, e: EventEffects): string {
+  const name = (k: string) => (k === "*" ? "all markets" : (roleOf(cfg as EconomyConfig, k)?.name ?? k));
+  const mult = (m: number) => `${m >= 1 ? "+" : "−"}${Math.round(Math.abs(m - 1) * 100)}%`;
+  const pts = (d: number) => `${d >= 0 ? "+" : "−"}${Math.abs(d)} pts`;
+  const map = (label: string, rec?: Record<string, number>) =>
+    rec && Object.keys(rec).length ? [`${label}: ${Object.entries(rec).map(([k, v]) => `${name(k)} ${mult(v)}`).join(", ")}`] : [];
+  return [
+    ...map("Demand", e.demand),
+    ...map("Supplier prices", e.spot),
+    ...map("Unit costs", e.cost),
+    ...(e.taxDelta ? [`Tax ${pts(e.taxDelta)}`] : []),
+    ...(e.interestDelta ? [`Interest ${pts(e.interestDelta)}`] : []),
+    ...(e.inflationDelta ? [`Inflation ${pts(e.inflationDelta)}`] : []),
+    ...(e.gdpDelta ? [`GDP growth ${pts(e.gdpDelta)}`] : []),
+    ...(e.confidence && e.confidence !== 1 ? [`Consumer confidence ${mult(e.confidence)}`] : []),
+    ...(e.adoptionDelta ? [`EV adoption ${e.adoptionDelta > 0 ? "+" : "−"}${Math.abs(e.adoptionDelta)}`] : []),
+  ].join(" · ") || "No economic effect (announcement only)";
+}

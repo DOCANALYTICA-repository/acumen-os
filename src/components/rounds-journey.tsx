@@ -1,13 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ClipboardCheck, FileUp, Network, Sheet, Target } from "lucide-react";
+import { ClipboardCheck, Link2, Network, Target } from "lucide-react";
 import { scaleIn, stagger } from "./motion";
 
 export type JourneyRound = { id: string; order: number; title: string; type: string; description: string; status: string; window: string };
 
-const ICON = { QUIZ: Target, EXCEL: Sheet, SUBMISSION: FileUp, SIMULATION: Network, MANUAL: ClipboardCheck } as const;
-const TINT = { QUIZ: "text-sky-600", EXCEL: "text-emerald-600", SUBMISSION: "text-violet-600", SIMULATION: "text-amber-600", MANUAL: "text-violet-600" } as const;
+const ICON = { QUIZ: Target, SUBMISSION: Link2, SIMULATION: Network, MANUAL: ClipboardCheck } as const;
+const TINT = { QUIZ: "text-sky-600", SUBMISSION: "text-violet-600", SIMULATION: "text-amber-600", MANUAL: "text-violet-600" } as const;
 const STATUS: Record<string, string> = {
   LIVE: "bg-emerald-100 text-emerald-700",
   UPCOMING: "bg-amber-100 text-amber-800",
@@ -38,7 +38,7 @@ export function RoundsJourney({ rounds }: { rounds: JourneyRound[] }) {
 
       <motion.ol variants={stagger} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} className="relative grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {rounds.map((r) => {
-          const Icon = ICON[r.type as keyof typeof ICON] ?? FileUp;
+          const Icon = ICON[r.type as keyof typeof ICON] ?? ClipboardCheck;
           return (
             <motion.li
               key={r.id}

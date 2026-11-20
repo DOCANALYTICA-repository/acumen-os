@@ -2,9 +2,30 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { TEAM_SIZE, teamStatus, TEAM_STATUS_LABEL, type TeamStatus } from "@/lib/rounds";
 import { fileUrl } from "@/lib/files";
-import { adminRemoveMember, saveTeamNote, setPaymentStatus, toggleDisqualify } from "@/app/actions/admin";
-import { Badge, Card, PageHeader, cls, fmtDate, statusTone, DownloadLink } from "@/components/ui";
+import { adminAddMember, adminRemoveMember, adminUpdateMember, saveTeamNote, setPaymentStatus, toggleDisqualify } from "@/app/actions/admin";
+import { YEARS } from "@/lib/registration";
+import { Badge, Card, Field, PageHeader, cls, fmtDate, statusTone, DownloadLink } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
+
+type MemberDefaults = { fullName: string; email: string; phone: string; college: string; year: string };
+
+/** Name, email, phone, college and year inputs shared by the edit and add forms. */
+function MemberFields({ d }: { d?: MemberDefaults }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <Field label="Full name"><input name="fullName" required defaultValue={d?.fullName} className={cls.input} /></Field>
+      <Field label="Email"><input name="email" type="email" required defaultValue={d?.email} className={cls.input} /></Field>
+      <Field label="Phone"><input name="phone" required defaultValue={d?.phone} className={cls.input} /></Field>
+      <Field label="College"><input name="college" required defaultValue={d?.college} className={cls.input} /></Field>
+      <Field label="Year / course">
+        <select name="year" required defaultValue={d?.year && (YEARS as readonly string[]).includes(d.year) ? d.year : ""} className={cls.input}>
+          <option value="" disabled>Select</option>
+          {YEARS.map((y) => <option key={y}>{y}</option>)}
+        </select>
+      </Field>
+    </div>
+  );
+}
 
 const FILTERS: [string, string][] = [["all", "All"], ["INCOMPLETE", "Incomplete"], ["COMPLETE", "Payment due"], ["PAID", "Paid"], ["PAYMENT_REJECTED", "Rejected"], ["DISQUALIFIED", "Disqualified"], ["dup", "Duplicate txn"]];
 
@@ -48,14 +69,14 @@ export default async function AdminTeams({ searchParams }: { searchParams: Promi
                   <Badge tone={statusTone(status)}>{TEAM_STATUS_LABEL[status]}</Badge>
                   {dup && <Badge tone="red">Duplicate txn ID</Badge>}
                 </div>
-                <div className="mt-1 text-xs text-muted">Created {fmtDate(t.createdAt)} · code <span className="font-mono">{t.inviteCode}</span> · {t.members.length}/{TEAM_SIZE} members</div>
+                <div className="mt-1 text-xs text-muted">Registered {fmtDate(t.createdAt)} · {t.members.length}/{TEAM_SIZE} members</div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {t.paymentStatus !== "PAID" && t.paymentScreenshot && (
-                  <form action={setPaymentStatus}><input type="hidden" name="teamId" value={t.id} /><input type="hidden" name="status" value="PAID" /><SubmitButton variant="secondary" className="px-3 py-1.5 text-xs">Accept payment</SubmitButton></form>
+                  <form action={setPaymentStatus}><input type="hidden" name="teamId" value={t.id} /><input type="hidden" name="status" value="PAID" /><SubmitButton variant="secondary" className="px-3 py-1.5 text-xs">Accept receipt</SubmitButton></form>
                 )}
                 {t.paymentStatus === "PAID" && (
-                  <form action={setPaymentStatus}><input type="hidden" name="teamId" value={t.id} /><input type="hidden" name="status" value="REJECTED" /><SubmitButton variant="secondary" className="px-3 py-1.5 text-xs" confirm={`Reject ${t.name}'s payment? They lose access to rounds until they re-upload.`}>Reject payment</SubmitButton></form>
+                  <form action={setPaymentStatus}><input type="hidden" name="teamId" value={t.id} /><input type="hidden" name="status" value="REJECTED" /><SubmitButton variant="secondary" className="px-3 py-1.5 text-xs" confirm={`Reject ${t.name}'s payment? They lose access to rounds until the captain attaches a new receipt.`}>Reject receipt</SubmitButton></form>
                 )}
                 <form action={toggleDisqualify}><input type="hidden" name="teamId" value={t.id} /><SubmitButton variant={t.disqualified ? "secondary" : "danger"} className="px-3 py-1.5 text-xs" confirm={t.disqualified ? `Reinstate ${t.name}?` : `Disqualify ${t.name}?`}>{t.disqualified ? "Reinstate" : "Disqualify"}</SubmitButton></form>
               </div>
@@ -67,20 +88,41 @@ export default async function AdminTeams({ searchParams }: { searchParams: Promi
                 <tbody>
                   {t.members.map((m) => (
                     <tr key={m.id} className="border-t border-line">
-                      <td className={cls.td}>{m.user.fullName} {m.isLead && <Badge tone="brand">Lead</Badge>}</td>
+                      <td className={cls.td}>{m.user.fullName} {m.isLead && <Badge tone="brand">Captain</Badge>}</td>
                       <td className={`${cls.td} text-xs`}>{m.user.email}<br />{m.user.phone}</td>
                       <td className={`${cls.td} text-xs`}>{m.user.college}<br />{m.user.year}</td>
-                      <td className={cls.td}><form action={adminRemoveMember}><input type="hidden" name="memberId" value={m.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm={`Remove ${m.user.fullName} from ${t.name}?`}>Remove</SubmitButton></form></td>
+                      <td className={`${cls.td} align-top`}>
+                        <details>
+                          <summary className="cursor-pointer text-xs font-medium text-brand">Edit</summary>
+                          <form action={adminUpdateMember} className="mt-2 w-[min(80vw,26rem)] space-y-2">
+                            <input type="hidden" name="memberId" value={m.id} />
+                            <MemberFields d={m.user} />
+                            {m.isLead && <Field label="New password (optional)" hint="Sets a new login password for the captain; tell them privately"><input name="newPassword" type="password" minLength={8} autoComplete="new-password" className={cls.input} /></Field>}
+                            <SubmitButton variant="secondary" className="px-2 py-1 text-xs">Save member</SubmitButton>
+                          </form>
+                        </details>
+                        {!m.isLead && <form action={adminRemoveMember} className="mt-1"><input type="hidden" name="memberId" value={m.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm={`Remove ${m.user.fullName} from ${t.name}? Their account is deleted so the email can register again.`}>Remove</SubmitButton></form>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <div className="space-y-3 rounded-lg bg-surface p-3 text-sm">
+              {t.members.length < TEAM_SIZE && (
+                <details className="md:col-start-1">
+                  <summary className="cursor-pointer text-sm font-medium text-brand">Add a member ({t.members.length}/{TEAM_SIZE})</summary>
+                  <form action={adminAddMember} className="mt-2 max-w-xl space-y-2">
+                    <input type="hidden" name="teamId" value={t.id} />
+                    <MemberFields />
+                    <SubmitButton variant="secondary" className="px-3 py-1.5 text-xs">Add member</SubmitButton>
+                  </form>
+                </details>
+              )}
+              <div className="space-y-3 rounded-lg bg-surface p-3 text-sm md:col-start-2 md:row-start-1">
                 <div>
                   <div className="text-xs font-medium text-muted">Payment</div>
                   {t.paymentScreenshot ? (
                     <>
-                      <a href={fileUrl(t.paymentScreenshot)} target="_blank" className={cls.ghost}>View screenshot</a>
+                      <a href={fileUrl(t.paymentScreenshot)} target="_blank" className={cls.ghost}>View receipt</a>
                       <div className="font-mono text-xs">{t.transactionId}</div>
                     </>
                   ) : <div className="text-muted">Not uploaded</div>}

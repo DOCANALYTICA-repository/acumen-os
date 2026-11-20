@@ -3,7 +3,6 @@ import { notFound, redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { db, parseJson } from "@/lib/db";
 import { submissionSettings } from "@/lib/rounds";
-import { fileUrl, formatBytes, type StoredFile } from "@/lib/files";
 import { saveScores } from "@/app/actions/judge";
 import { Badge, Card, Container, Empty, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
@@ -20,8 +19,6 @@ export default async function ScorePage({ params }: { params: Promise<{ roundId:
   ]);
   if (!round || !team) notFound();
   const anon = submissionSettings(round).anonymousJudging && judge.role === "JUDGE";
-  const files = parseJson<StoredFile[]>(sub?.files, []);
-  const firstPdf = files.find((f) => f.name.toLowerCase().endsWith(".pdf"));
   const back = judge.role === "ADMIN" ? `/admin/submissions?round=${roundId}` : "/judge";
 
   return (
@@ -38,11 +35,9 @@ export default async function ScorePage({ params }: { params: Promise<{ roundId:
               <div className="mb-2 text-xs text-muted">Version {sub.version} · {fmtDate(sub.submittedAt)} {sub.isLate && <Badge tone="red">Late</Badge>}</div>
               {sub.summary && <p className="mb-3 whitespace-pre-line text-sm text-ink/80">{sub.summary}</p>}
               <ul className="space-y-1 text-sm">
-                {files.map((f) => <li key={f.path}><a href={fileUrl(f.path)} target="_blank" className={cls.ghost}>{f.name}</a> <span className="text-xs text-muted">{formatBytes(f.size)}</span></li>)}
-                {parseJson<string[]>(sub.links, []).map((l) => <li key={l}><a href={l} target="_blank" rel="noreferrer" className={cls.ghost}>{l}</a></li>)}
+                {parseJson<string[]>(sub.links, []).map((l) => <li key={l}><a href={l} target="_blank" rel="noreferrer" className={`${cls.ghost} break-all`}>{l}</a></li>)}
               </ul>
             </Card>
-            {firstPdf && <iframe src={fileUrl(firstPdf.path)} className="h-[70vh] w-full rounded-xl border border-line bg-white" title="Preview" />}
           </div>
           <Card title="Score">
             <form action={saveScores} className="space-y-4">

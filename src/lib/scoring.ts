@@ -1,8 +1,7 @@
 import "server-only";
-import * as XLSX from "xlsx";
 import type { Question } from "@prisma/client";
 import { db, parseJson } from "./db";
-import { excelKey, manualSettings, type ExcelKeyItem } from "./rounds";
+import { manualSettings } from "./rounds";
 import { parseConfig } from "./sim/model";
 import { guessPoints, MAX_GUESS_POINTS } from "./live-quiz-types";
 
@@ -59,37 +58,9 @@ export function scoreQuiz(questions: Question[], answers: Record<string, QuizAns
   return Math.max(0, score);
 }
 
-export function excelItemCorrect(item: ExcelKeyItem, given: string | undefined) {
-  const g = norm(given);
-  if (!g) return false;
-  const n = numericEqual(g, norm(item.value), item.tolerance || 0);
-  return n ?? g === norm(item.value);
-}
-
-export function scoreExcel(key: ExcelKeyItem[], values: Record<string, string>) {
-  return key.reduce((s, item) => s + (excelItemCorrect(item, values[item.cell]) ? item.marks : 0), 0);
-}
-
-/** Reads the given cells ("Sheet!B2" or "B2" = first sheet) out of an .xlsx buffer. */
-export function readWorkbookCells(buf: Buffer, cells: string[]): Record<string, string> {
-  const wb = XLSX.read(buf, { type: "buffer" });
-  const out: Record<string, string> = {};
-  for (const ref of cells) {
-    const [sheetName, addr] = ref.includes("!") ? ref.split("!") : [wb.SheetNames[0], ref];
-    const sheet = wb.Sheets[sheetName.replace(/^'|'$/g, "")];
-    const cell = sheet?.[addr.toUpperCase()];
-    out[ref] = cell ? String(cell.v ?? "") : "";
-  }
-  return out;
-}
-
 /** Guesstimate rounds: every question is worth up to 3 points. */
 export function quizMax(questions: Pick<Question, "marks">[]) {
   return questions.length * MAX_GUESS_POINTS;
-}
-
-export function excelMax(key: ExcelKeyItem[]) {
-  return key.reduce((s, k) => s + k.marks, 0);
 }
 
 export type LeaderboardRow = {
@@ -114,7 +85,6 @@ export async function computeLeaderboard() {
   const maxByRound: Record<string, number> = {};
   for (const r of rounds) {
     if (r.type === "QUIZ") maxByRound[r.id] = quizMax(r.questions);
-    else if (r.type === "EXCEL") maxByRound[r.id] = excelMax(excelKey(r));
     else if (r.type === "SIMULATION") maxByRound[r.id] = parseConfig(r.economy?.config).scoring.maxMarks;
     else if (r.type === "MANUAL") maxByRound[r.id] = manualSettings(r).maxMarks;
     else maxByRound[r.id] = r.criteria.reduce((s, c) => s + c.maxMarks, 0);

@@ -4,11 +4,13 @@ Website for Acumen: home page, registration with teams, 5 rounds (Round 1 host-l
 
 ## Run it locally
 
-Requires Node.js 20+.
+Requires Node.js 20+ and a Postgres database: a free test Supabase project, or a local one from
+`npx prisma dev --name acumen-test`. Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `DIRECT_URL`
+(see [docs/deploy.md](docs/deploy.md#local-development)).
 
 ```bash
 npm install
-npm run db:reset   # creates prisma/dev.db and loads rounds, sample guesstimates and demo teams
+npm run db:reset   # WIPES the database in .env, then loads rounds, sample guesstimates and demo teams
 npm run dev        # http://localhost:3000
 ```
 
@@ -34,7 +36,7 @@ Test logins are listed at the top of `prisma/seed.ts` (admin, judge, demo partic
 | Simulation workspace (participants) | `src/app/rounds/[id]/sim-view.tsx`, `sim-workspace.tsx` |
 | Simulation control room (organisers) | `src/app/admin/simulation/[roundId]` |
 
-Uploaded files are stored in `./storage` (git-ignored).
+Registration is one wizard (modelled on Bidwave): the captain enters the team name, both members, a password, then pays on the payment portal (link and step-by-step guide set in Admin → Content) and attaches the receipt. The team is active immediately; organisers review receipts in Admin → Teams and can reject one, which locks the team until the captain re-uploads. Only the captain logs in. Payment receipts are the only files stored by the site (locally in `./storage`, git-ignored; Supabase Storage when deployed). Round work lives on Google Classroom / Drive and is shared as links.
 
 ## How the main rules work
 
@@ -49,11 +51,11 @@ Uploaded files are stored in `./storage` (git-ignored).
   - **Setup auction**: every team starts with the same budget. Lots are business identities (the ten industry roles: EV maker, battery maker, charging, swapping, fleet, delivery, leasing, recycling, fleet software, maintenance) and resources with lasting perks (prime location, patents, cheap power, skilled workforce, brand ambassador, land, permits, customer data). The organiser opens one lot at a time; bids are live with a soft close; budgets are enforced and every team must keep enough for an identity. Teams without an identity at the end get a leftover one at the reserve price. Unspent budget becomes starting cash. Organisers can skip the auction and auto-assign identities.
   - **Each year** teams set price, production, new capacity, bank borrowing/repayment and spending on six levers: marketing, sales force, customer service, employee welfare, technology & R&D, sustainability. Levers drive four indices (technology, brand, customer satisfaction, employee satisfaction, 0–100) that change demand, unit costs and effective capacity, with diminishing returns and carry-over between years.
   - **Deals**: supply contracts (only along real input relationships), technology licences, loans between companies and co-marketing alliances. The deal type fixes what it does; units, prices, fees, interest and duration are negotiated. Accepted deals are binding and change both companies' results. Everyone sees who has deals with whom; terms stay private.
-  - **Economy**: GDP growth (market size), inflation (costs, wages, price level), interest rate, corporate tax (losses carry forward), consumer confidence and EV adoption. Every market also has a simulated incumbent, so market share is meaningful even with one team per role. Scheduled and live events, and the control room's economy controls, move these parameters.
+  - **Economy**: GDP growth (market size), inflation (costs, wages, price level), interest rate, corporate tax (losses carry forward), consumer confidence and EV adoption. Every market also has a simulated incumbent, so market share is meaningful even with one team per role. Scheduled and live events, and the control room's economy controls, move these parameters. **Saved events**: build events ahead of time in the control room ("Create an event" → "Save for later", using a preset or simple fields for demand %, cost %, tax, interest, inflation, GDP and confidence); during any open year press "Run now" to announce one to every team immediately. It applies when that year is processed, and the saved copy stays in the library for reuse (resets and template reloads keep it).
   - **End**: awards for most profitable, highest revenue, highest market share, best return, fastest growing, happiest customers, best employer, most innovative, strongest brand, top deal-maker and biggest taxpayer. Marks combine profit (ROE), revenue, market share, satisfaction, brand and reliability (weights and floor configurable) and are written to the round's scores.
   - All outcomes come from a deterministic server-side engine (`src/lib/sim/engine.ts`). Participants may use any outside tools, including AI; there is no AI inside the platform.
   - Use the dry run in the control room to test a configuration with bot teams before the event. Do not deploy or migrate the schema while a simulation is running.
-- **Legacy round types**: `EXCEL` (on-site Excel case) and `SUBMISSION` (file upload with judge rubric) still work if you create such rounds, but the seeded event no longer uses them.
+- **Judged link rounds**: the `SUBMISSION` round type (teams submit up to 5 links; judges mark them with a rubric) still works if you create such a round, but the seeded event doesn't use it. Off-platform rounds take an optional link when a team marks them done. Nothing except payment proof is uploaded to the site.
 
 ## Not in v1 yet
 
@@ -62,4 +64,9 @@ Uploaded files are stored in `./storage` (git-ignored).
 
 ## Deploying
 
-Switch `provider` in `prisma/schema.prisma` to `postgresql`, set `DATABASE_URL` and a long random `AUTH_SECRET`, and move file storage from the local `storage/` folder to object storage (S3, R2 or Supabase Storage) — `src/lib/files.ts` is the only place that touches the disk.
+Vercel for the site and Supabase for the database and file storage. Step-by-step instructions are in [docs/deploy.md](docs/deploy.md). In short: create the Supabase project and a private `uploads` bucket, run `npm run db:setup` once against it, then import the repo on Vercel with the variables from `.env.example`.
+
+## Docs
+
+- [Deploying the site](docs/deploy.md): Vercel + Supabase setup, limits, registration test checklist.
+- [Simulation calculations](docs/simulation-calculations.md): everything the Round 4 engine computes.

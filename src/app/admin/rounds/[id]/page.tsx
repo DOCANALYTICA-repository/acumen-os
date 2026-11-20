@@ -2,11 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { parseConfig } from "@/lib/sim/model";
 import { db, parseJson } from "@/lib/db";
-import { ALL_FILE_TYPES, excelKey, manualSettings, submissionSettings, TYPE_LABEL } from "@/lib/rounds";
-import { excelMax, quizMax } from "@/lib/scoring";
-import { fileUrl } from "@/lib/files";
+import { manualSettings, submissionSettings, TYPE_LABEL } from "@/lib/rounds";
+import { quizMax } from "@/lib/scoring";
 import { fmtNumber } from "@/lib/live-quiz-types";
-import { addQuestion, deleteQuestion, importQuestions, moveQuestion, saveExcelKey, saveRubric, setManualScore, setOffPlatformScore, updateRound, uploadRoundFile } from "@/app/actions/admin";
+import { addQuestion, deleteQuestion, importQuestions, moveQuestion, saveRubric, setManualScore, setOffPlatformScore, updateRound } from "@/app/actions/admin";
 import { Badge, Card, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -29,11 +28,9 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
   });
   if (!round) notFound();
   const rules = submissionSettings(round);
-  const key = excelKey(round);
   const manual = manualSettings(round);
   const max =
     round.type === "QUIZ" ? quizMax(round.questions)
-    : round.type === "EXCEL" ? excelMax(key)
     : round.type === "SIMULATION" ? parseConfig(round.economy?.config).scoring.maxMarks
     : round.type === "MANUAL" ? manual.maxMarks
     : round.criteria.reduce((s, c) => s + c.maxMarks, 0);
@@ -64,13 +61,11 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
             </Field>
             <Field label="Starts (IST)"><input type="datetime-local" name="startsAt" defaultValue={toIstInput(round.startsAt)} className={cls.input} /></Field>
             <Field label="Ends (IST)"><input type="datetime-local" name="endsAt" defaultValue={toIstInput(round.endsAt)} className={cls.input} /></Field>
-            {round.type === "EXCEL" && (
-              <Field label="Timer (minutes)" hint="Per team, from when they press Start"><input type="number" min={1} name="durationMinutes" defaultValue={round.durationMinutes ?? ""} className={cls.input} /></Field>
-            )}
             <Field label="Leaderboard weight" hint="Relative weight in the overall score"><input type="number" step="0.5" min={0} name="weight" defaultValue={round.weight} className={cls.input} /></Field>
           </div>
           <Field label="Description"><textarea name="description" rows={2} defaultValue={round.description} className={cls.input} /></Field>
           <Field label="Instructions"><textarea name="instructions" rows={3} defaultValue={round.instructions} className={cls.input} /></Field>
+          <Field label="Brief link" hint="Optional: a Google Drive / Classroom link to the round brief, shown to teams as “Open brief”"><input name="briefUrl" type="url" placeholder="https://drive.google.com/…" defaultValue={round.briefUrl ?? ""} className={cls.input} /></Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="restrictToQualified" defaultChecked={round.restrictToQualified} /> Only qualified teams can enter (set the cut-off on Results)</label>
 
           {round.type === "MANUAL" && (
@@ -87,20 +82,13 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
           {round.type === "SUBMISSION" && (
             <div className="rounded-lg border border-line p-4">
               <div className="mb-3 text-sm font-semibold text-ink">Submission rules</div>
-              <div className="mb-3 flex flex-wrap gap-3">
-                {ALL_FILE_TYPES.map((t) => (
-                  <label key={t} className="flex items-center gap-1 text-sm"><input type="checkbox" name="allowedTypes" value={t} defaultChecked={rules.allowedTypes.includes(t)} /> {t}</label>
-                ))}
-              </div>
+              <p className="mb-3 text-xs text-muted">Teams submit links (Drive, Classroom, YouTube…), up to 5 per submission. Nothing is uploaded to the site.</p>
               <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Max file size (MB)"><input type="number" name="maxSizeMB" min={1} max={500} defaultValue={rules.maxSizeMB} className={cls.input} /></Field>
-                <Field label="Files per submission"><input type="number" name="maxFiles" min={1} max={10} defaultValue={rules.maxFiles} className={cls.input} /></Field>
                 <Field label="Late penalty (%)"><input type="number" name="latePenaltyPct" min={0} max={100} defaultValue={rules.latePenaltyPct} className={cls.input} /></Field>
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-sm">
                 <label className="flex items-center gap-2"><input type="checkbox" name="allowResubmit" defaultChecked={rules.allowResubmit} /> Allow resubmission until deadline</label>
                 <label className="flex items-center gap-2"><input type="checkbox" name="allowLate" defaultChecked={rules.allowLate} /> Accept late submissions</label>
-                <label className="flex items-center gap-2"><input type="checkbox" name="allowLinks" defaultChecked={rules.allowLinks} /> Allow links</label>
                 <label className="flex items-center gap-2"><input type="checkbox" name="anonymousJudging" defaultChecked={rules.anonymousJudging} /> Hide team names from judges</label>
               </div>
             </div>
@@ -109,15 +97,6 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
         </form>
       </Card>
 
-      <Card title="Brief file" className="mb-6">
-        {round.briefFile && <p className="mb-3 text-sm"><a href={fileUrl(round.briefFile)} className={cls.ghost}>Current brief</a></p>}
-        <form action={uploadRoundFile} className="flex flex-wrap items-end gap-3">
-          <input type="hidden" name="id" value={round.id} />
-          <input type="hidden" name="kind" value="brief" />
-          <input type="file" name="file" className={`${cls.input} max-w-sm`} />
-          <SubmitButton variant="secondary">Upload brief</SubmitButton>
-        </form>
-      </Card>
 
       {round.type === "SIMULATION" && (
         <Card title="Startup Ecosystem simulation" className="mb-6">
@@ -188,38 +167,6 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
         </>
       )}
 
-      {round.type === "EXCEL" && (
-        <div className="mb-6 grid gap-6">
-          <Card title="Case workbook">
-            {round.excelTemplate ? <p className="mb-3 text-sm"><a href={fileUrl(round.excelTemplate)} className={cls.ghost}>Download current workbook</a></p> : <p className="mb-3 text-sm text-muted">No workbook uploaded.</p>}
-            <form action={uploadRoundFile} className="flex flex-wrap items-end gap-3">
-              <input type="hidden" name="id" value={round.id} />
-              <input type="hidden" name="kind" value="template" />
-              <input type="file" name="file" accept=".xlsx" className={`${cls.input} max-w-sm`} />
-              <SubmitButton variant="secondary">Upload .xlsx</SubmitButton>
-            </form>
-          </Card>
-          <Card title="Answer key">
-            <p className="mb-3 text-sm text-muted">Cells are read from uploaded workbooks (<code>Sheet!B2</code>); typed answers use the same keys. Tolerance applies to numbers.</p>
-            <form action={saveExcelKey} className="space-y-2">
-              <input type="hidden" name="roundId" value={round.id} />
-              <div className="grid grid-cols-[110px_1fr_140px_90px_70px] gap-2 text-xs font-semibold text-muted"><span>Cell</span><span>Question label</span><span>Correct value</span><span>Tolerance</span><span>Marks</span></div>
-              {[...key, ...Array.from({ length: 2 }, () => ({ cell: "", label: "", value: "", tolerance: 0, marks: 0 }))].map((k, i) => (
-                <div key={i} className="grid grid-cols-[110px_1fr_140px_90px_70px] gap-2">
-                  <input name="cell" defaultValue={k.cell} className={cls.input} placeholder="Answers!B7" />
-                  <input name="label" defaultValue={k.label} className={cls.input} />
-                  <input name="value" defaultValue={k.value} className={cls.input} />
-                  <input name="tolerance" type="number" step="any" defaultValue={k.tolerance} className={cls.input} />
-                  <input name="marks" type="number" step="0.5" defaultValue={k.marks} className={cls.input} />
-                </div>
-              ))}
-              <p className="text-xs text-muted">Clear a row&apos;s cell to remove it. Save to add more blank rows.</p>
-              <SubmitButton>Save answer key</SubmitButton>
-            </form>
-          </Card>
-        </div>
-      )}
-
       {round.type === "SUBMISSION" && (
         <Card title="Judging rubric" className="mb-6">
           <form action={saveRubric} className="space-y-2">
@@ -246,11 +193,11 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
                 <tbody>
                   {manualTeams.map((t) => {
                     const a = round.attempts.find((x) => x.teamId === t.id);
-                    const by = parseJson<{ markedBy?: string }>(a?.answers, {}).markedBy;
+                    const { markedBy: by, link } = parseJson<{ markedBy?: string; link?: string }>(a?.answers, {});
                     return (
                       <tr key={t.id} className="border-t border-line">
                         <td className={cls.td}>{t.name}</td>
-                        <td className={`${cls.td} text-xs`}>{a?.submittedAt ? <>{fmtDate(a.submittedAt)}{by ? ` · ${by}` : ""}</> : <Badge tone="amber">not yet</Badge>}</td>
+                        <td className={`${cls.td} text-xs`}>{a?.submittedAt ? <>{fmtDate(a.submittedAt)}{by ? ` · ${by}` : ""}{link && <><br /><a href={link} target="_blank" rel="noreferrer" className={`${cls.ghost} break-all`}>Open link</a></>}</> : <Badge tone="amber">not yet</Badge>}</td>
                         <td className={cls.td}>
                           <form action={setOffPlatformScore} className="flex gap-1">
                             <input type="hidden" name="roundId" value={round.id} />
@@ -275,7 +222,7 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
           {round.attempts.length === 0 ? <p className="text-sm text-muted">No attempts yet.</p> : (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead><tr><th className={cls.th}>Team</th><th className={cls.th}>Started</th><th className={cls.th}>Submitted</th><th className={cls.th}>Auto score</th><th className={cls.th}>Tab switches</th><th className={cls.th}>Manual marks</th><th className={cls.th}>File</th></tr></thead>
+                <thead><tr><th className={cls.th}>Team</th><th className={cls.th}>Started</th><th className={cls.th}>Submitted</th><th className={cls.th}>Auto score</th><th className={cls.th}>Manual marks</th></tr></thead>
                 <tbody>
                   {round.attempts.map((a) => (
                     <tr key={a.id} className="border-t border-line">
@@ -283,7 +230,6 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
                       <td className={`${cls.td} text-xs`}>{fmtDate(a.startedAt)}</td>
                       <td className={`${cls.td} text-xs`}>{a.submittedAt ? fmtDate(a.submittedAt) : <Badge tone="amber">in progress</Badge>}</td>
                       <td className={cls.td}>{a.autoScore ?? "—"} / {max}</td>
-                      <td className={cls.td}>{a.tabSwitches >= 3 ? <Badge tone="red">{a.tabSwitches}</Badge> : a.tabSwitches}</td>
                       <td className={cls.td}>
                         <form action={setManualScore} className="flex gap-1">
                           <input type="hidden" name="attemptId" value={a.id} />
@@ -291,7 +237,6 @@ export default async function AdminRound({ params }: { params: Promise<{ id: str
                           <SubmitButton variant="secondary" className="px-2 py-1 text-xs">Save</SubmitButton>
                         </form>
                       </td>
-                      <td className={cls.td}>{a.fileUrl ? <a href={fileUrl(a.fileUrl)} className={cls.ghost}>xlsx</a> : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
