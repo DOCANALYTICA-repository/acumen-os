@@ -60,13 +60,19 @@ export function RegisterWizard({ payment, eventName }: { payment: PaymentInfo; e
     return () => clearTimeout(t);
   }, [values.teamName]);
 
-  const patch = (p: Partial<Values>) => setValues((v) => ({ ...v, ...p }));
-  const patchMember = (i: 0 | 1, p: Partial<Member>) =>
+  // Any edit clears the step's error: it described the old input, not what's there now.
+  const patch = (p: Partial<Values>) => {
+    setError(null);
+    setValues((v) => ({ ...v, ...p }));
+  };
+  const patchMember = (i: 0 | 1, p: Partial<Member>) => {
+    setError(null);
     setValues((v) => {
       const members = [...v.members] as [Member, Member];
       members[i] = { ...members[i], ...p };
       return { ...v, members };
     });
+  };
 
   /** Validates only what the current step owns. */
   function stepError(i: number): string | null {
