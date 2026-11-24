@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { getContent } from "@/lib/content";
-import { addAnnouncement, createStaff, deleteAsset, deleteStaff, saveSiteContent, toggleAnnouncement, addAsset } from "@/app/actions/admin";
+import { addAnnouncement, deleteAsset, saveSiteContent, toggleAnnouncement, addAsset } from "@/app/actions/admin";
 import { Badge, Card, Field, PageHeader, cls, fmtDate } from "@/components/ui";
 import { SubmitButton } from "@/components/submit-button";
 
@@ -9,15 +10,14 @@ function toIstInput(iso: string) {
 }
 
 export default async function AdminContent() {
-  const [c, announcements, assets, staff] = await Promise.all([
+  const [c, announcements, assets] = await Promise.all([
     getContent(),
     db.announcement.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
     db.asset.findMany({ orderBy: { createdAt: "desc" } }),
-    db.user.findMany({ where: { role: { in: ["ADMIN", "JUDGE"] } }, orderBy: { role: "asc" } }),
   ]);
   return (
     <>
-      <PageHeader title="Content & settings" subtitle="Home page text, event rules, announcements, downloads and staff accounts" />
+      <PageHeader title="Content & settings" subtitle="Home page text, event rules, announcements, and downloads" />
 
       <Card title="Event settings & Home page" className="mb-6">
         <form action={saveSiteContent} className="space-y-4">
@@ -61,21 +61,7 @@ export default async function AdminContent() {
         </Card>
 
         <Card title="Staff accounts">
-          <ul className="mb-4 space-y-2">
-            {staff.map((u) => (
-              <li key={u.id} className="flex items-center justify-between text-sm">
-                <span>{u.fullName} <span className="text-xs text-muted">{u.email}</span> <Badge tone={u.role === "ADMIN" ? "brand" : "blue"}>{u.role.toLowerCase()}</Badge></span>
-                <form action={deleteStaff}><input type="hidden" name="id" value={u.id} /><SubmitButton variant="secondary" className="px-2 py-1 text-xs" confirm={`Remove ${u.email}?`}>Remove</SubmitButton></form>
-              </li>
-            ))}
-          </ul>
-          <form action={createStaff} className="grid gap-2 sm:grid-cols-2">
-            <input name="fullName" placeholder="Full name" className={cls.input} />
-            <input name="email" type="email" required placeholder="Email" className={cls.input} />
-            <input name="password" type="password" required minLength={8} placeholder="Temporary password" className={cls.input} />
-            <select name="role" className={cls.input}><option value="JUDGE">Judge</option><option value="ADMIN">Admin</option></select>
-            <SubmitButton className="sm:col-span-2">Add staff account</SubmitButton>
-          </form>
+          <p className="text-sm text-muted">Admins and judges are invited by email in <Link href="/admin/staff" className={cls.ghost}>Staff &amp; access</Link>. They sign in with a code, no password.</p>
         </Card>
       </div>
 

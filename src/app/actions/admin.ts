@@ -416,26 +416,3 @@ export async function deleteAsset(fd: FormData) {
   await db.asset.delete({ where: { id: s(fd, "id") } });
   refresh("/admin/content");
 }
-
-export async function createStaff(fd: FormData) {
-  const admin = await requireAdmin();
-  const email = s(fd, "email").toLowerCase();
-  const password = s(fd, "password");
-  const role = s(fd, "role") === "ADMIN" ? "ADMIN" : "JUDGE";
-  if (!email.includes("@") || password.length < 8) throw new Error("Enter a valid email and a password of at least 8 characters.");
-  if (await db.user.findUnique({ where: { email } })) throw new Error("A user with this email already exists.");
-  await db.user.create({ data: { fullName: s(fd, "fullName") || email, email, passwordHash: await hashPassword(password), role, college: "Staff" } });
-  await audit(admin.id, "staff.create", `${email} (${role})`);
-  refresh("/admin/content");
-}
-
-export async function deleteStaff(fd: FormData) {
-  const admin = await requireAdmin();
-  const id = s(fd, "id");
-  if (id === admin.id) throw new Error("You cannot remove your own account.");
-  const u = await db.user.findUniqueOrThrow({ where: { id } });
-  if (u.role === "PARTICIPANT") throw new Error("Not a staff account.");
-  await db.user.delete({ where: { id } });
-  await audit(admin.id, "staff.delete", u.email);
-  refresh("/admin/content");
-}

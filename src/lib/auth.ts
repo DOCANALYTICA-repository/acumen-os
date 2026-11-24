@@ -9,7 +9,7 @@ const COOKIE = "acumen_session";
 let cachedSecret: Uint8Array | null = null;
 
 /** Signing key for sessions. In production a real AUTH_SECRET (32+ characters) is required. */
-function getSecret() {
+export function getSecret() {
   if (cachedSecret) return cachedSecret;
   const value = process.env.AUTH_SECRET ?? "";
   if (process.env.NODE_ENV === "production" && (value.length < 32 || value === "dev-secret"))

@@ -41,8 +41,9 @@ does nothing if rounds already exist, so running it again is safe.
 2. At vercel.com: **Add New → Project**, import the repository and pick the branch. The framework
    (Next.js) is detected automatically.
 3. **Environment Variables:** add `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET` (`uploads`) and `AUTH_SECRET`
-   (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
+   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET` (`uploads`), `AUTH_SECRET`
+   (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`) and the
+   Brevo keys for staff sign-in (see below).
    `ADMIN_EMAIL`/`ADMIN_PASSWORD` aren't needed on Vercel.
 4. **Settings → Functions:** set the region to the same one as Supabase (e.g. Mumbai `bom1`). Pages
    are much faster when the site and database are close.
@@ -81,6 +82,21 @@ After a schema change, run `npm run db:setup` again before deploying, so the tab
 5. **Admin → Content → Payment portal link / Guide for payment:** check the steps match the real
    portal (especially the event name in the second Category list), and add the WhatsApp group link
    shown on the registration success page.
+
+## Staff sign-in by email code (Blossoms-style)
+
+Admins and judges are invited in **Admin → Staff & access** and sign in at `/login?as=staff` with a
+6-digit code that Acumen emails them through **Brevo** (no password). Codes last 10 minutes and only
+the newest one works.
+
+1. At brevo.com (free plan: 300 emails a day): **Senders, domains & IPs → Senders → Add a sender**
+   and verify the address the codes come from. Verifying the domain too keeps them out of spam.
+2. **SMTP & API → API keys → Generate a new API key.**
+3. In Vercel's environment variables add `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` (the verified
+   sender) and optionally `BREVO_SENDER_NAME` (default "Acumen"), then redeploy.
+
+Locally, leave `BREVO_API_KEY` empty and the code is printed in the dev server's console. The seeded
+`ADMIN_EMAIL` admin can still log in with its password on the Team tab.
 
 ## Testing registrations
 

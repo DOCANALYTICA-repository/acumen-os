@@ -12,6 +12,7 @@ const items = [
   ["/admin/results", "Results & leaderboard"],
   ["/admin/analytics", "Analytics"],
   ["/admin/content", "Content & settings"],
+  ["/admin/staff", "Staff & access"],
 ] as const;
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

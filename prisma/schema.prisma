@@ -406,6 +406,17 @@ model SimSnapshot {
   @@unique([economyId, cycle, ventureId])
 }
 
+/// Blossoms-style staff allowlist: an admin invites an email; that person signs in on the Staff tab with a
+/// one-time code emailed by Supabase Auth, which creates their User with this role on first sign-in.
+model StaffInvite {
+  email       String    @id // lowercase
+  fullName    String
+  role        String    @default("ADMIN") // ADMIN | JUDGE
+  invitedById String?
+  createdAt   DateTime  @default(now())
+  claimedAt   DateTime?
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   actorId   String?
