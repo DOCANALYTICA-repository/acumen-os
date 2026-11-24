@@ -32,6 +32,11 @@ npm run db:setup
 This creates the tables, the five rounds and one admin account. It never deletes anything, and it
 does nothing if rounds already exist, so running it again is safe.
 
+It also turns on Row Level Security for every table, which locks Supabase's public REST API out of
+the data (the site itself connects as `postgres` and isn't affected). If you ever run plain
+`prisma db push`, follow it with `npm run db:rls`, or Supabase's Security Advisor will flag the new
+tables as "RLS Disabled in Public".
+
 > `npm run db:reset` **wipes** whatever database `.env` points at and fills it with demo data.
 > Never run it while `.env` points at the live Supabase project.
 
