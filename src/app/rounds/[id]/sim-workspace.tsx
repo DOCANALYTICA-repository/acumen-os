@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Award as AwardIcon, Gavel, Handshake, LineChart as ChartIcon, Mail, Settings2, Trophy } from "lucide-react";
@@ -12,6 +12,7 @@ import {
   type DealKind, type Decision, type EconomyConfig, type FinalMetrics, type MarketState, type VentureResult, type VentureState,
 } from "@/lib/sim/model";
 import { Alert, Badge, Card, cls } from "@/components/ui";
+import { SoundCheck, playSound, useSoundUnlock } from "@/components/sound";
 
 export type WorkspaceData = {
   roundId: string;
@@ -86,15 +87,69 @@ const Kpi = ({ label, value, sub }: { label: string; value: string; sub?: string
   </div>
 );
 
+/**
+ * Messages and deal proposals from other teams: plays a chime when a new one arrives and counts unread messages.
+ * "Read" means seen on the Deals & messages tab; the time of the newest read message is kept in this browser.
+ */
+function useInbox(data: WorkspaceData) {
+  const me = data.me.id;
+  const key = `acumen-sim-seen:${data.roundId}:${me}`;
+  const incoming = data.messages.filter((m) => m.fromId !== me && m.kind !== "INTEL"); // research reports are the team's own purchase
+  const proposals = data.contracts.filter((c) => c.status === "PROPOSED" && c.proposerId !== me && (c.sellerId === me || c.buyerId === me));
+  const latest = incoming.reduce((a, m) => Math.max(a, m.at), 0);
+
+  const [seenAt, setSeenAt] = useState<number | null>(null); // null until mounted
+  useEffect(() => {
+    let stored: number | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null && Number.isFinite(Number(raw))) stored = Number(raw);
+    } catch {}
+    setSeenAt(stored ?? latest); // first visit on this browser: what is already there counts as read
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read once per team
+  }, [key]);
+  const markSeen = useCallback(() => {
+    setSeenAt(latest);
+    try {
+      localStorage.setItem(key, String(latest));
+    } catch {}
+  }, [key, latest]);
+
+  const ids = [...incoming.map((m) => m.id), ...proposals.map((c) => c.id)].join(",");
+  const heard = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const list = ids ? ids.split(",") : [];
+    if (heard.current === null) {
+      heard.current = new Set(list); // nothing plays for what was already there on load
+      return;
+    }
+    const fresh = list.filter((id) => !heard.current!.has(id));
+    fresh.forEach((id) => heard.current!.add(id));
+    if (fresh.length) playSound("message");
+  }, [ids]);
+
+  const unread = seenAt === null ? 0 : incoming.filter((m) => m.at > seenAt).length;
+  return { unread, proposals: proposals.length, seenAt, markSeen };
+}
+
+type Inbox = ReturnType<typeof useInbox>;
+
 export function SimWorkspace({ data }: { data: WorkspaceData }) {
   const router = useRouter();
   const { cfg, status } = data;
-  const auctionLive = status === "AUCTION";
-  // Live auctions refresh fast; the rest of the game every 10 seconds.
+  useSoundUnlock();
+  const inbox = useInbox(data);
+  // Waiting for the auction and the live auction refresh fast, so every team moves on together; the years every 5 seconds.
+  const fast = status === "AUCTION" || status === "SETUP";
   useEffect(() => {
-    const t = setInterval(() => router.refresh(), auctionLive ? 2000 : 10_000);
+    const t = setInterval(() => router.refresh(), fast ? 2000 : 5000);
     return () => clearInterval(t);
-  }, [router, auctionLive]);
+  }, [router, fast]);
+  // Between the auction and year 1 the messages are on screen, so they count as read.
+  const { unread, markSeen } = inbox;
+  useEffect(() => {
+    if (status === "READY" && unread > 0) markSeen();
+  }, [status, unread, markSeen]);
   const now = useNow();
   const ended = data.cycleEndsAt !== null && now !== null && now > data.cycleEndsAt;
   useEffect(() => {
@@ -113,13 +168,14 @@ export function SimWorkspace({ data }: { data: WorkspaceData }) {
     return (
       <Card title={cfg.industry}>
         <p className="mb-4 text-sm text-ink/80">{cfg.tagline}</p>
-        <Alert tone="blue">The organisers are preparing the setup auction. Keep this page open; it updates by itself.</Alert>
+        <Alert tone="blue">The organisers are preparing the setup auction. Keep this page open; the auction opens here by itself.</Alert>
+        <div className="mt-4"><SoundCheck /></div>
       </Card>
     );
   }
   if (status === "AUCTION") return <AuctionScreen data={data} now={now} />;
   if (status === "READY") return <ReadyScreen data={data} name={name} />;
-  return <Game data={data} now={now} name={name} />;
+  return <Game data={data} now={now} name={name} inbox={inbox} />;
 }
 
 // ---------------- Setup auction ----------------
@@ -274,10 +330,21 @@ const TABS = [
   { key: "fin", label: "Financials", icon: ChartIcon },
 ] as const;
 
-function Game({ data, now, name }: { data: WorkspaceData; now: number | null; name: (id: string | null) => string }) {
+function Game({ data, now, name, inbox }: { data: WorkspaceData; now: number | null; name: (id: string | null) => string; inbox: Inbox }) {
   const { cfg, status, me } = data;
   const finished = status === "FINISHED";
   const [tab, setTab] = useState<string>(finished ? "results" : "overview");
+  // Messages newer than this get a "New" tag. Fixed when the tab opens, so the tags stay while the team reads.
+  const [newSince, setNewSince] = useState<number | null>(null);
+  const { unread, seenAt, markSeen } = inbox;
+  useEffect(() => {
+    setNewSince(tab === "deals" ? seenAt : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- capture once per visit to the tab
+  }, [tab]);
+  useEffect(() => {
+    if (tab === "deals" && unread > 0) markSeen();
+  }, [tab, unread, markSeen]);
+  const dealsBadge = inbox.unread + inbox.proposals;
   const state = me.state!;
   const role = roleOf(cfg, me.roleKey)!;
   const waiting = data.contracts.filter((c) => c.status === "PROPOSED" && c.proposerId !== me.id && (c.sellerId === me.id || c.buyerId === me.id)).length;
@@ -306,14 +373,18 @@ function Game({ data, now, name }: { data: WorkspaceData; now: number | null; na
       <nav className="flex flex-wrap gap-2" role="tablist">
         {tabs.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-            className={`${cls.btn} ${tab === t.key ? cls.primary : cls.secondary}`}><t.icon className="h-4 w-4" /> {t.label}</button>
+            className={`${cls.btn} ${tab === t.key ? cls.primary : cls.secondary} relative`}><t.icon className="h-4 w-4" /> {t.label}
+            {t.key === "deals" && dealsBadge > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-none text-white ring-2 ring-white"
+                aria-label={`${dealsBadge} new`}>{dealsBadge > 9 ? "9+" : dealsBadge}</span>
+            )}</button>
         ))}
       </nav>
 
       {tab === "results" && finished && <Results data={data} />}
       {tab === "overview" && <Overview data={data} />}
       {tab === "decide" && <Decisions data={data} />}
-      {tab === "deals" && <Deals data={data} name={name} />}
+      {tab === "deals" && <Deals data={data} name={name} newSince={newSince} />}
       {tab === "market" && <MarketTab data={data} />}
       {tab === "fin" && <Financials data={data} />}
     </div>
@@ -459,7 +530,7 @@ function Decisions({ data }: { data: WorkspaceData }) {
   );
 }
 
-function Deals({ data, name }: { data: WorkspaceData; name: (id: string | null) => string }) {
+function Deals({ data, name, newSince }: { data: WorkspaceData; name: (id: string | null) => string; newSince: number | null }) {
   const { cfg, me } = data;
   const [respState, respond, respPending] = useActionState(respondContract, undefined);
   const mine = data.contracts.filter((c) => c.sellerId === me.id || c.buyerId === me.id);
@@ -529,7 +600,7 @@ function Deals({ data, name }: { data: WorkspaceData; name: (id: string | null) 
         )}
       </Card>
       <div className="grid gap-6 xl:grid-cols-2">
-        <Messages data={data} name={name} />
+        <Messages data={data} name={name} newSince={newSince} />
         <Card title="Public deal register">
           <p className="mb-2 text-xs text-muted">Everyone can see who has a deal with whom. Terms stay private to the two companies.</p>
           {register.length === 0 ? <p className="text-sm text-muted">No other deals yet.</p> : <ul className="space-y-1 text-sm">{register.map((c) => <li key={c.id}>{describe(c)}</li>)}</ul>}
@@ -596,7 +667,7 @@ function ProposeDeal({ data }: { data: WorkspaceData }) {
   );
 }
 
-function Messages({ data, name }: { data: WorkspaceData; name: (id: string | null) => string }) {
+function Messages({ data, name, newSince = null }: { data: WorkspaceData; name: (id: string | null) => string; newSince?: number | null }) {
   const [thread, setThread] = useState<string>("all");
   const [state, action, pending] = useActionState(sendSimMessage, undefined);
   const me = data.me.id;
@@ -617,7 +688,8 @@ function Messages({ data, name }: { data: WorkspaceData; name: (id: string | nul
         {list.length === 0 && <li className="text-muted">No messages.</li>}
         {[...list].reverse().map((m) => (
           <li key={m.id} className={`rounded-xl px-3 py-2 ${m.kind === "SYSTEM" ? "bg-sky-50" : m.kind === "INTEL" ? "bg-amber-50" : m.fromId === me ? "bg-emerald-50" : "bg-white/80"}`}>
-            <div className="text-xs text-muted">{m.kind === "INTEL" ? "Research report" : name(m.fromId)}{m.toId === null ? " → everyone" : m.toId === me ? "" : ` → ${name(m.toId)}`} · {istTime(m.at)}</div>
+            <div className="text-xs text-muted">{m.kind === "INTEL" ? "Research report" : name(m.fromId)}{m.toId === null ? " → everyone" : m.toId === me ? "" : ` → ${name(m.toId)}`} · {istTime(m.at)}
+              {newSince !== null && m.at > newSince && m.fromId !== me && m.kind !== "INTEL" && <span className="ml-2 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">New</span>}</div>
             <div className="whitespace-pre-line text-ink">{m.body}</div>
           </li>
         ))}

@@ -2,12 +2,13 @@ import { db, parseJson } from "@/lib/db";
 import { parseConfig, type Decision, type MarketState, type VentureResult } from "@/lib/sim/model";
 import { auctionWallet, finalStandings, marketState, maybeAdvance, ventureState } from "@/lib/sim/service";
 import { Alert, Card } from "@/components/ui";
+import { AutoRefresh } from "@/components/sound";
 import { SimWorkspace, type WorkspaceData } from "./sim-workspace";
 
 /** Loads only what this team is allowed to see (information asymmetry is enforced here, server-side). */
 export async function SimView({ roundId, teamId, resultsPublished }: { roundId: string; teamId: string; resultsPublished: boolean }) {
   const econ0 = await db.simEconomy.findUnique({ where: { roundId } });
-  if (!econ0) return <Alert tone="amber">The organisers have not set up this simulation yet.</Alert>;
+  if (!econ0) return <><AutoRefresh /><Alert tone="amber">The organisers have not set up this simulation yet. Keep this page open; it updates by itself.</Alert></>;
   await maybeAdvance(econ0.id);
   const econ = await db.simEconomy.findUniqueOrThrow({ where: { id: econ0.id }, include: { ventures: { include: { team: true } } } });
   const cfg = parseConfig(econ.config);
@@ -15,8 +16,10 @@ export async function SimView({ roundId, teamId, resultsPublished }: { roundId: 
   if (!me) {
     return (
       <Card title={cfg.industry}>
+        {/* prepareAuction adds every eligible team when the auction starts: keep checking so they join without a reload. */}
+        {(econ.status === "SETUP" || econ.status === "AUCTION") && <AutoRefresh />}
         <p className="text-sm text-muted">{cfg.tagline}</p>
-        <div className="mt-4"><Alert tone="amber">Your team has not joined this economy yet. The organisers add every eligible team before the setup auction.</Alert></div>
+        <div className="mt-4"><Alert tone="amber">Your team has not joined this economy yet. The organisers add every eligible team when the setup auction starts. Keep this page open; it opens the auction by itself.</Alert></div>
       </Card>
     );
   }

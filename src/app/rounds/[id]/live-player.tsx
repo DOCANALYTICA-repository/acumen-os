@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Lock } from "lucide-react";
 import { fmtNumber, GUESS_TIERS, parseGuess, type PlayerState } from "@/lib/live-quiz-types";
 import { postLive, useLivePoll } from "@/components/live-quiz-ui";
 import { cls } from "@/components/ui";
+import { SoundCheck, playSound, useSoundUnlock } from "@/components/sound";
 
 function istTime(ms: number) {
   return new Date(ms).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -20,6 +21,13 @@ export function LivePlayer({ roundId, initial }: { roundId: string; initial: Pla
   const [justSaved, setJustSaved] = useState(false);
 
   const qid = s.question?.id ?? null;
+  useSoundUnlock();
+  // Chime whenever the host moves to another question (not for the one already showing when the page opened).
+  const lastQ = useRef(qid);
+  useEffect(() => {
+    if (qid !== null && qid !== lastQ.current) playSound("question");
+    lastQ.current = qid;
+  }, [qid]);
   const savedValue = s.mine?.value ?? null;
   // New question: start from whatever the team saved for it (if the host came back to it).
   useEffect(() => {
@@ -66,6 +74,7 @@ export function LivePlayer({ roundId, initial }: { roundId: string; initial: Pla
           <h2 className="text-2xl font-bold text-ink">Waiting for the host</h2>
           <p className="mt-2 text-muted">This round is run live from the main screen. Keep this page open; it joins you automatically when the organisers open the lobby.</p>
           <div className="mx-auto mt-6 h-3 w-3 animate-ping rounded-full bg-sky-500" aria-hidden />
+          <div className="mt-6"><SoundCheck kind="question" /></div>
         </Panel>
       )}
 
@@ -77,8 +86,10 @@ export function LivePlayer({ roundId, initial }: { roundId: string; initial: Pla
           <ul className="mt-6 space-y-1 text-left text-sm text-ink/80">
             <li>• Answer each question with one number and press <strong>Save</strong>. Any teammate can save; the latest save counts.</li>
             <li>• You can change your answer while the host is on that question, including if the host goes back to it.</li>
+            <li>• A chime plays each time a new question appears.</li>
             <li>• Scoring: within 5% of the answer = {GUESS_TIERS[0].points} points, within 10% = {GUESS_TIERS[1].points}, within 20% = {GUESS_TIERS[2].points}, further = 0.</li>
           </ul>
+          <div className="mt-6"><SoundCheck kind="question" /></div>
         </Panel>
       )}
 
