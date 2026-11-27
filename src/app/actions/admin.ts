@@ -1,7 +1,7 @@
 "use server";
 
 import { randomUUID } from "crypto";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { db, audit } from "@/lib/db";
 import { hashPassword, requireAdmin } from "@/lib/auth";
 import { getContent, saveContent, type SiteContent } from "@/lib/content";
@@ -389,6 +389,7 @@ export async function addAnnouncement(fd: FormData) {
   if (!message) return;
   await db.announcement.updateMany({ data: { active: false } });
   await db.announcement.create({ data: { message } });
+  revalidateTag("announcement");
   refresh("/admin/content");
 }
 
@@ -397,6 +398,7 @@ export async function toggleAnnouncement(fd: FormData) {
   const a = await db.announcement.findUniqueOrThrow({ where: { id: s(fd, "id") } });
   if (!a.active) await db.announcement.updateMany({ data: { active: false } });
   await db.announcement.update({ where: { id: a.id }, data: { active: !a.active } });
+  revalidateTag("announcement");
   refresh("/admin/content");
 }
 

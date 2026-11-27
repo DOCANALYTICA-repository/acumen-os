@@ -95,10 +95,18 @@ body {
   }
 }
 
+/* Route enter: quick and subtle, never starting from fully invisible. */
+@keyframes page-enter {
+  from { opacity: 0.35; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.page-enter { animation: page-enter 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+
 @media (prefers-reduced-motion: reduce) {
   .text-shimmer,
   .animate-float,
-  .animate-float-slow {
+  .animate-float-slow,
+  .page-enter {
     animation: none;
   }
 }

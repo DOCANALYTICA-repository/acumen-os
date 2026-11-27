@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
@@ -61,15 +62,18 @@ export async function getSessionUserId(): Promise<string | null> {
   }
 }
 
-/** Current user with team membership, or null. Role is always read fresh from the DB. */
-export async function getCurrentUser() {
+/**
+ * Current user with team membership, or null. Role is always read fresh from the DB, once per request:
+ * React's cache() shares the result between the nav, layouts and the page rendering in the same request.
+ */
+export const getCurrentUser = cache(async () => {
   const uid = await getSessionUserId();
   if (!uid) return null;
   return db.user.findUnique({
     where: { id: uid },
     include: { membership: { include: { team: { include: { members: { include: { user: true } } } } } } },
   });
-}
+});
 
 export async function requireUser() {
   const user = await getCurrentUser();

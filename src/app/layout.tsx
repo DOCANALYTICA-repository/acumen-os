@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/nav";
@@ -15,10 +16,20 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The banner runs on every page and on every live refresh (the simulation and quiz screens refresh every few
+ * seconds), so it is cached; adding or toggling an announcement clears it (revalidateTag in actions/admin.ts).
+ */
+const activeAnnouncement = unstable_cache(
+  () => db.announcement.findFirst({ where: { active: true }, orderBy: { createdAt: "desc" }, select: { message: true } }),
+  ["active-announcement"],
+  { tags: ["announcement"], revalidate: 300 },
+);
+
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const announcement = await db.announcement.findFirst({ where: { active: true }, orderBy: { createdAt: "desc" } });
+  const announcement = await activeAnnouncement();
   return (
-    <html lang="en" className={`${inter.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${geistMono.variable}`} data-scroll-behavior="smooth">
       <body className="relative min-h-screen overflow-x-hidden font-sans antialiased">
         <MotionProvider>
           <Nav />
